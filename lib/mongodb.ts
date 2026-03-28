@@ -1,7 +1,20 @@
 import { MongoClient, Db } from "mongodb";
 
-const uri = process.env.MONGODB_URI!;
-const dbName = process.env.MONGODB_DB || "neosis";
+let client: MongoClient;
+let db: Db;
+
+export async function getDb(): Promise<Db> {
+  if (db) return db;
+  const uri = process.env.MONGODB_URI;
+  if (!uri) throw new Error("MONGODB_URI is not set");
+  const dbName = process.env.MONGODB_DB ?? "neosis";
+  if (!client) {
+    client = new MongoClient(uri);
+    await client.connect();
+  }
+  db = client.db(dbName);
+  return db;
+}
 
 export const COLLECTIONS = {
   prs: "prs",
@@ -13,18 +26,3 @@ export const COLLECTIONS = {
   agents: "agents",
   preferences: "preferences",
 } as const;
-
-let client: MongoClient | null = null;
-let db: Db | null = null;
-
-export async function getDb(): Promise<Db> {
-  if (db) return db;
-
-  if (!client) {
-    client = new MongoClient(uri);
-    await client.connect();
-  }
-
-  db = client.db(dbName);
-  return db;
-}
