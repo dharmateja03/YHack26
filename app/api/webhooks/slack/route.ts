@@ -1,40 +1,117 @@
-import { COLLECTIONS, getDb } from "@/lib/mongodb";
+import { NextResponse } from "next/server";
+import { getDb, COLLECTIONS } from "@/lib/mongodb";
+import { embed } from "@/lib/voyage";
 
-export async function POST(req: Request) {
-  let payload: any;
+// ─── Slack URL verification challenge ─────────────────────────────────────
+// Slack sends this once when you register the Events API endpoint.
+// Must respond with the challenge value immediately.
+
+// ─── Message upsert + embedding ───────────────────────────────────────────
+// Returns 200 immediately — upsert and embedding happen asynchronously
+// so Slack doesn't retry thinking the endpoint is slow.
+
+export async function POST(req: Request): Promise<NextResponse> {
+  let body: Record<string, unknown>;
+
   try {
-    payload = await req.json();
+    body = await req.json();
   } catch {
-    return Response.json({ error: "Invalid JSON" }, { status: 400 });
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  if (payload?.type === "url_verification") {
-    return Response.json({ challenge: payload.challenge ?? "" });
+  // ── URL verification handshake ──────────────────────────────────────────
+  if (body.type === "url_verification") {
+    return NextResponse.json({ challenge: body.challenge });
   }
 
-  if (payload?.type === "event_callback" && payload?.event?.type === "message") {
-    const event = payload.event;
-    const db = await getDb();
-    await db.collection(COLLECTIONS.messages).updateOne(
-      { id: event.ts },
-      {
-        $set: {
-          id: event.ts,
-          ts: event.ts,
-          channel: event.channel ?? "",
-          user: event.user ?? "",
-          text: event.text ?? "",
-          source: "slack",
-          updatedAt: new Date(),
-        },
-        $setOnInsert: {
-          createdAt: new Date(),
-        },
-      },
-      { upsert: true }
-    );
+  // ── Event callback ──────────────────────────────────────────────────────
+  if (body.type === "event_callback") {
+    const event = body.event as Record<string, unknown> | undefined;
+
+    if (
+      event &&
+      (event.type === "message" || event.type === "app_mention") &&
+      // Ignore bot messages and message-changed / message-deleted subtypes
+      !event.subtype &&
+      !event.bot_id
+    ) {
+      // Fire-and-forget: return 200 before doing DB work so Slack doesn't
+      // time out and retry.
+      ingestMessage(body, event).catch((err) => {
+        console.error("[slack webhook] Background ingest error:", err);
+      });
+    }
+
+    return NextResponse.json({ ok: true });
   }
 
-  return Response.json({ ok: true });
+  // Unknown event type — ack and move on
+  return NextResponse.json({ ok: true });
 }
 
+// ─── ingestMessage ─────────────────────────────────────────────────────────
+
+async function ingestMessage(
+  body: Record<string, unknown>,
+  event: Record<string, unknown>,
+): Promise<void> {
+  const messageId = event.ts as string;
+  const channelId = (event.channel as string) ?? "";
+  const author = (event.user as string) ?? "";
+  const text = (event.text as string) ?? "";
+  const threadId = (event.thread_ts as string) ?? messageId;
+  const teamId = (body.team_id as string) ?? "";
+  const createdAt = new Date(parseFloat(messageId) * 1000);
+
+  const mentions = extractMentions(text);
+
+  // Build the base document
+  const messageDoc: Record<string, unknown> = {
+    messageId,
+    channelId,
+    author,
+    text,
+    mentions,
+    threadId,
+    teamId,
+    createdAt,
+  };
+
+  // Generate Voyage AI embedding on the message text (best-effort — don't
+  // block the upsert if the embedding API is unavailable or key is missing).
+  if (text.trim() && process.env.VOYAGE_API_KEY) {
+    try {
+      const embedding = await embed(text);
+      messageDoc.embedding = embedding;
+    } catch (err) {
+      console.error(
+        "[slack webhook] Embedding failed — storing without vector:",
+        err,
+      );
+    }
+  }
+
+  const db = await getDb();
+
+  await db
+    .collection(COLLECTIONS.messages)
+    .updateOne({ messageId }, { $set: messageDoc }, { upsert: true });
+}
+
+// ─── Helpers ───────────────────────────────────────────────────────────────
+
+/**
+ * Extract all @-mentioned user IDs from a Slack message text.
+ * Slack encodes mentions as <@U12345678> in the raw text.
+ */
+function extractMentions(text: string): string[] {
+  const mentionRegex = /<@([A-Z0-9]+)>/g;
+  const mentions: string[] = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = mentionRegex.exec(text)) !== null) {
+    mentions.push(match[1]);
+  }
+
+  return mentions;
+}

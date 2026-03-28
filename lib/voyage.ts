@@ -1,57 +1,50 @@
-const EMBEDDING_DIM = 1536;
+import axios from "axios";
 
-function hashText(text: string): number {
-  let hash = 2166136261;
-  for (let i = 0; i < text.length; i++) {
-    hash ^= text.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return hash >>> 0;
-}
+const VOYAGE_API_URL = "https://api.voyageai.com/v1/embeddings";
+const MODEL = "voyage-code-2";
 
-function deterministicVector(text: string): number[] {
-  let seed = hashText(text);
-  const out = new Array<number>(EMBEDDING_DIM);
-  for (let i = 0; i < EMBEDDING_DIM; i++) {
-    seed = (1664525 * seed + 1013904223) >>> 0;
-    out[i] = (seed / 0xffffffff) * 2 - 1;
-  }
-  return out;
-}
-
+/**
+ * Embed a single text string using Voyage AI.
+ * Returns a 1536-dimensional embedding vector.
+ */
 export async function embed(text: string): Promise<number[]> {
-  const apiKey = process.env.VOYAGE_API_KEY;
-  if (!apiKey) return deterministicVector(text);
-
-  try {
-    const res = await fetch("https://api.voyageai.com/v1/embeddings", {
-      method: "POST",
+  const response = await axios.post(
+    VOYAGE_API_URL,
+    {
+      input: [text],
+      model: MODEL,
+    },
+    {
       headers: {
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${process.env.VOYAGE_API_KEY}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        model: "voyage-3-large",
-        input: text,
-      }),
-    });
-
-    if (!res.ok) {
-      return deterministicVector(text);
     }
+  );
 
-    const json = await res.json();
-    const vector = json?.data?.[0]?.embedding;
-    if (!Array.isArray(vector) || vector.length === 0) {
-      return deterministicVector(text);
-    }
-    return vector.map((v: unknown) => Number(v));
-  } catch {
-    return deterministicVector(text);
-  }
+  return response.data.data[0].embedding as number[];
 }
 
+/**
+ * Embed a batch of text strings using Voyage AI.
+ * Returns an array of 1536-dimensional embedding vectors.
+ */
 export async function embedBatch(texts: string[]): Promise<number[][]> {
-  return Promise.all(texts.map((t) => embed(t)));
-}
+  if (texts.length === 0) return [];
 
+  const response = await axios.post(
+    VOYAGE_API_URL,
+    {
+      input: texts,
+      model: MODEL,
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.VOYAGE_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+
+  return response.data.data.map((item: { embedding: number[] }) => item.embedding);
+}
