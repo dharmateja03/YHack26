@@ -1,3 +1,84 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=Instrument+Serif:ital@0;1&display=swap');
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+:root {
+  --font-mono: 'JetBrains Mono', monospace;
+  --font-display: 'Instrument Serif', serif;
+}
+
+body {
+  font-family: var(--font-mono);
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+/* Orb pulse rings */
+@keyframes ring-out {
+  0%   { transform: scale(1); opacity: 0.45; }
+  100% { transform: scale(1.75); opacity: 0; }
+}
+@keyframes ring-out-2 {
+  0%   { transform: scale(1); opacity: 0.3; }
+  100% { transform: scale(2.1); opacity: 0; }
+}
+@keyframes ring-out-3 {
+  0%   { transform: scale(1); opacity: 0.15; }
+  100% { transform: scale(2.5); opacity: 0; }
+}
+
+/* Orb glow breathe */
+@keyframes orb-breathe {
+  0%, 100% { box-shadow: 0 0 35px rgba(6,182,212,0.25), 0 0 70px rgba(6,182,212,0.08); }
+  50%       { box-shadow: 0 0 55px rgba(6,182,212,0.45), 0 0 110px rgba(6,182,212,0.15); }
+}
+@keyframes orb-listen {
+  0%, 100% { box-shadow: 0 0 50px rgba(6,182,212,0.7), 0 0 100px rgba(6,182,212,0.35); }
+  50%       { box-shadow: 0 0 80px rgba(6,182,212,1),   0 0 160px rgba(6,182,212,0.5); }
+}
+
+/* Bar waveform */
+@keyframes bar-wave {
+  0%, 100% { transform: scaleY(0.3); }
+  50%       { transform: scaleY(1); }
+}
+
+/* Slide up */
+@keyframes slide-up {
+  from { transform: translateY(110%); }
+  to   { transform: translateY(0); }
+}
+
+/* Stagger fade in */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.ring-1-anim { animation: ring-out   2.4s ease-out infinite; }
+.ring-2-anim { animation: ring-out-2 2.4s ease-out infinite 0.5s; }
+.ring-3-anim { animation: ring-out-3 2.4s ease-out infinite 1s; }
+
+.orb-breathe  { animation: orb-breathe 3.5s ease-in-out infinite; }
+.orb-listen   { animation: orb-listen  1.1s ease-in-out infinite; }
+.slide-up     { animation: slide-up 0.35s cubic-bezier(0.16,1,0.3,1) forwards; }
+.fade-up      { animation: fade-up 0.4s ease-out forwards; }
+
+/* subtle scanline texture */
+.scanlines::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(255,255,255,0.012) 2px,
+    rgba(255,255,255,0.012) 4px
+  );
+  pointer-events: none;
+  border-radius: inherit;
+}
