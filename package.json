@@ -39,6 +39,9 @@
     "preset": "ts-jest",
     "testEnvironment": "node",
     "moduleNameMapper": {
+      "^@/lib/mongodb$": "<rootDir>/__mocks__/lib/mongodb.ts",
+      "^@/lib/lava$": "<rootDir>/__mocks__/lib/lava.ts",
+      "^@/lib/voyage$": "<rootDir>/__mocks__/lib/voyage.ts",
       "^@/(.*)$": "<rootDir>/$1"
     }
   }
