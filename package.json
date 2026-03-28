@@ -14,7 +14,7 @@
     "test:sai": "jest __tests__/sai.test.ts"
   },
   "dependencies": {
-    "next": "14.2.0",
+    "next": "14.2.25",
     "react": "^18",
     "react-dom": "^18",
     "mongodb": "^6.5.0",
@@ -38,6 +38,7 @@
   "jest": {
     "preset": "ts-jest",
     "testEnvironment": "node",
+    "setupFiles": ["<rootDir>/__tests__/setup.ts"],
     "moduleNameMapper": {
       "^@/(.*)$": "<rootDir>/$1"
     }
