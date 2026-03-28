@@ -45,12 +45,12 @@ npm run test:dharma
 
 ## MUST DO (demo breaks without these)
 
-- [ ] `lib/mongodb.ts` — MongoDB client singleton + export all collection name constants
+- [x] `lib/mongodb.ts` — MongoDB client singleton + export all collection name constants
   - Export: `COLLECTIONS = { prs, tickets, messages, calendars, briefs, sprints, agents, preferences }`
   - Use `process.env.MONGODB_URI` and `process.env.MONGODB_DB`
   - Single client instance (no reconnects on every call)
 
-- [ ] `lib/lava.ts` — Lava gateway client + model routing table
+- [x] `lib/lava.ts` — Lava gateway client + model routing table
   - Base URL: `https://gateway.lava.so/v1`
   - Export `MODELS` constant:
     ```
@@ -63,7 +63,7 @@ npm run test:dharma
   - Export `lavaChat(agentId, messages)` — sends request to Lava, injects `x-lava-agent-id` header automatically
   - Use openai SDK pointed at Lava base URL (Lava is OpenAI-compatible)
 
-- [ ] `scripts/seed.ts` — seed MongoDB with demo data
+- [x] `scripts/seed.ts` — seed MongoDB with demo data
   - 10 PRs: 4 stale (updatedAt > 24h ago), 2 PRs share same files (conflict demo)
   - 6 tickets: 1 P1, 2 P2, 3 blocked by PR ids
   - 20 Slack messages: 3 threads showing someone asking for help, messages mentioning PR names
@@ -72,14 +72,14 @@ npm run test:dharma
   - 2 preference docs: one blocks before 9am, one blocks Thursdays
   - Run with: `npm run seed`
 
-- [ ] `app/api/agents/pr/route.ts` — Agent 2: PR blocker
+- [x] `app/api/agents/pr/route.ts` — Agent 2: PR blocker
   - `GET /api/agents/pr?teamId=xxx` — returns all open PRs from MongoDB with wait hours calculated
   - `POST /api/agents/pr/scan` — reads prs collection, calls `lavaChat("neo-pr", ...)` to analyze blockers, returns structured list
   - `POST /api/agents/pr/route` — given prId, finds best reviewer by file history (check `files` array overlap with past PRs), returns suggestion
   - `POST /api/agents/pr/nudge` — body must include `{ prId, reviewerId, confirmed: true }` — only sends Slack message if confirmed is true
   - `POST /api/agents/pr/merge-check` — runs checklist: tests green? all approvals? no conflicts? ticket linked?
 
-- [ ] `app/api/webhooks/github/route.ts` — GitHub webhook handler
+- [x] `app/api/webhooks/github/route.ts` — GitHub webhook handler
   - Receives PR open/update/close/merge events
   - Upserts into `prs` collection using `prId` as unique key
   - Stores: prId, title, body, author, files (array), state, approvals, checks, updatedAt
