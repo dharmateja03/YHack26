@@ -28,18 +28,16 @@ Neosis is a voice-first AI executive assistant for engineering teams. It runs 5 
 | Layer | Tool | Why |
 |---|---|---|
 | Frontend | Next.js 14 (App Router) | Web first, deploy to Vercel in one command |
-| UI | Tailwind + shadcn/ui | Ship UI in hours not days |
-| Backend | FastAPI (Python) | All AI libs are Python-first, Hermes is Python |
+| UI | Tailwind + shadcn/ui | Simple: one main agent button + settings page |
 | Database | MongoDB Atlas | Memory, session state, agent logs, sprint data |
 | Vector search | MongoDB Atlas Vector Search | Same DB for RAG — no separate Pinecone needed |
-| Agent core | Hermes Agent (Nous Research) | Memory, skills, subagents, voice mode. Open source. Saves 3 months. |
-| LLM routing | Lava Gateway | Routes Claude/Groq per task, per-agent spend keys, usage metering |
-| Voice | ElevenLabs (eleven_turbo_v2) | Streaming TTS, first word in 300ms |
+| LLM routing | Lava Gateway (`gateway.lava.so/v1`) | Routes Claude/Groq per agent, per-agent spend keys, usage metering |
+| Voice TTS | ElevenLabs (`eleven_turbo_v2`) | Streaming TTS, first word in 300ms, natural voice |
 | Auth + OAuth vault | Auth0 AI | Stores GitHub/Slack/Jira/Calendar tokens per user securely |
 | Embeddings | Voyage AI | Better than OpenAI for mixed code + text content |
 | Background jobs | Inngest | Webhook ingestion, scheduled briefs, retry logic |
 | Calendar/Email API | Nylas | Google + Outlook + Apple in one SDK for scheduling agent |
-| Billing | Lava Monetize | Prepaid credits, usage metering, Stripe — never build billing yourself |
+| Billing | Lava Monetize | Per-agent spend tracking, usage metering |
 | Deployment | Vercel (frontend) + Railway (backend) | Zero DevOps |
 
 ---
@@ -47,19 +45,21 @@ Neosis is a voice-first AI executive assistant for engineering teams. It runs 5 
 ## LLM Model Routing via Lava
 
 Every LLM call goes through Lava Gateway — never call Claude or Groq directly.
+Base URL: `https://gateway.lava.so/v1`
+Auth: `Authorization: Bearer $LAVA_API_KEY`
+Agent tracking: pass `x-lava-agent-id` header on every call.
 
-| Task | Model | Why |
+| Agent | Model ID | Why |
 |---|---|---|
-| Root cause analysis | Claude Sonnet 4.5 | Deep multi-step reasoning |
-| Sprint forecast | Claude Sonnet 4.5 | Weighing multiple signals |
-| 1-on-1 prep brief | Claude Sonnet 4.5 | Nuanced people context |
-| Morning/evening brief script | Claude Haiku 4.5 | Fast + cheap, 300 tokens |
-| PR nudge messages | Groq Llama 3.1 70B | Simple generation, 10x cheaper |
-| Standup writer | Groq Llama 3.1 70B | Templated, fast |
-| Release notes | Groq Llama 3.1 70B | Structured output |
-| Ticket triage | Groq Llama 3.1 70B | Classification task |
+| Neo Brief (morning/evening script) | `claude-haiku-4-5-20251001` | Fast + cheap, 300 tokens max |
+| Neo PR (nudge messages, routing) | `groq/llama-3.1-70b-versatile` | Simple generation, 10x cheaper than Claude |
+| Neo Sched (slot negotiation) | `claude-sonnet-4-6` | Multi-step reasoning over calendars |
+| Neo Root (root cause analysis) | `claude-sonnet-4-6` | Deep reasoning over retrieved evidence |
+| Neo Sprint — forecast | `claude-sonnet-4-6` | Weighing velocity + blocker signals |
+| Neo Sprint — release notes | `groq/llama-3.1-70b-versatile` | Structured templated output, fast |
 
-Lava automatically tracks spend per agent using `x-lava-agent-id` header. Each of the 5 agents has its own spend key so you can see cost per agent in the Lava dashboard.
+**x-lava-agent-id values:** `neo-brief`, `neo-pr`, `neo-sched`, `neo-root`, `neo-sprint`
+Each agent's token spend shows up separately in the Lava dashboard — proves unit economics to judges.
 
 ---
 
@@ -360,17 +360,33 @@ This is the OAuth-scoped agent model — each agent only accesses what it needs.
 
 ---
 
+## UI — Keep It Simple
+
+Two pages only:
+
+**`/` — Main Dashboard**
+- One big "Talk to Neo" button in the center
+- Shows 5 agent status cards (Brief / PR / Sched / Root / Sprint) — just name + last run time + status badge
+- Voice player bar at bottom when a brief is playing
+- No sidebar, no complex nav
+
+**`/settings` — Connections**
+- One card per integration: GitHub, Slack, Jira, Google Calendar
+- Each card has a single "Connect" button that triggers OAuth
+- Shows "Connected ✓" with the account name once linked
+- No other settings for now
+
+---
+
 ## Voice Architecture
 
 Voice briefings use a two-step pipeline:
 
-**Step 1 — Script generation:** Claude Haiku via Lava writes the spoken script. Prompt instructs it to write naturally for audio — no bullet points, no headers, conversational. Max 180 words (90 seconds when spoken).
+**Step 1 — Script generation:** Claude Haiku via Lava writes the spoken script. Max 180 words (90 seconds spoken). No bullet points — conversational prose only.
 
-**Step 2 — TTS streaming:** Script sent to ElevenLabs eleven_turbo_v2. Response streams back as audio/mpeg. Frontend plays it using the Web Audio API as chunks arrive. First word plays in ~300ms.
+**Step 2 — TTS streaming:** Script sent to ElevenLabs `eleven_turbo_v2`. Streams back as `audio/mpeg`. Web Audio API plays chunks as they arrive. First word in ~300ms.
 
-**Frontend voice player:** A simple audio player component in Next.js that hits GET /api/agents/brief with Accept: audio/mpeg header. Shows waveform animation while playing. Has a "read instead" button that shows the text script.
-
-**Voice commands (browser):** Web Speech API for voice input in the browser. User presses a button, speaks, transcript sent to the relevant agent endpoint. Agent responds in text first (fast), then optionally speaks the response via ElevenLabs.
+**Voice input:** Browser Web Speech API. User clicks "Talk to Neo", speaks, transcript sent to agent endpoint. Agent responds in text first, then speaks via ElevenLabs.
 
 ---
 
@@ -437,18 +453,6 @@ INNGEST_EVENT_KEY=...
 
 ---
 
-## What Hermes Gives You For Free
-
-Hermes Agent (open source, MIT) handles:
-- Persistent memory across sessions — agent remembers what it learned about your team
-- Skill creation — agent creates reusable procedures from experience
-- Subagent spawning — when Agent 3 (scheduling) needs to check multiple calendars in parallel, it spawns subagents via Hermes
-- Voice mode infrastructure — CLI and Telegram voice built in
-- MCP integration — GitHub, Slack, Jira, Notion all connect via MCP protocol natively
-
-Run Hermes on Railway as a separate service. Your Next.js API routes call Hermes via its REST API when they need the agent loop. For hackathon, you can skip Hermes and call Lava directly — add Hermes in week 2.
-
----
 
 ## What Lava Gives You For Free
 
@@ -463,54 +467,48 @@ Pass `x-lava-agent-id: neo-brief` (or neo-pr, neo-sched, neo-root, neo-sprint) i
 
 ---
 
-## Folder Structure
+## Folder Structure & File Ownership
 
 ```
 neosis/
 ├── app/
-│   ├── page.tsx                    — dashboard home
-│   ├── layout.tsx                  — root layout + Auth0 provider
+│   ├── page.tsx                    — [SAI] main dashboard: Talk to Neo button + 5 agent cards
+│   ├── settings/page.tsx           — [SAI] connections page: GitHub/Slack/Jira/Calendar OAuth buttons
+│   ├── layout.tsx                  — [SAI] root layout + Auth0 provider
 │   ├── api/
 │   │   ├── agents/
-│   │   │   ├── brief/route.ts      — Agent 1: morning/evening brief
-│   │   │   ├── pr/route.ts         — Agent 2: PR blocker + routing
-│   │   │   ├── schedule/route.ts   — Agent 3: meeting negotiator
-│   │   │   ├── rootcause/route.ts  — Agent 4: root cause detective
-│   │   │   └── sprint/route.ts     — Agent 5: sprint forecaster
+│   │   │   ├── brief/route.ts      — [KESHAV] Agent 1: morning/evening brief + ElevenLabs stream
+│   │   │   ├── pr/route.ts         — [DHARMA] Agent 2: PR blocker scan + reviewer routing + nudge
+│   │   │   ├── schedule/route.ts   — [SAI] Agent 3: meeting negotiator + Nylas booking
+│   │   │   ├── rootcause/route.ts  — [VEDA] Agent 4: root cause via Atlas Vector Search
+│   │   │   └── sprint/route.ts     — [KESHAV] Agent 5: sprint forecast + release notes
 │   │   ├── webhooks/
-│   │   │   ├── github/route.ts     — GitHub PR events ingestion
-│   │   │   ├── slack/route.ts      — Slack message ingestion
-│   │   │   ├── jira/route.ts       — Jira ticket ingestion
-│   │   │   └── nylas/route.ts      — Calendar event ingestion
+│   │   │   ├── github/route.ts     — [DHARMA] GitHub PR events → prs collection
+│   │   │   ├── slack/route.ts      — [KESHAV] Slack messages → messages collection
+│   │   │   ├── jira/route.ts       — [VEDA] Jira tickets → tickets collection
+│   │   │   └── nylas/route.ts      — [SAI] Calendar events → calendars collection
 │   │   ├── auth/
-│   │   │   └── [...auth0]/route.ts — Auth0 catch-all handler
+│   │   │   └── [...auth0]/route.ts — [SAI] Auth0 catch-all handler
 │   │   ├── users/
-│   │   │   └── me/route.ts
-│   │   ├── teams/
-│   │   │   └── [teamId]/route.ts
+│   │   │   └── me/route.ts         — [SAI] current user + connected integrations
 │   │   └── data/
-│   │       ├── prs/route.ts
-│   │       ├── tickets/route.ts
-│   │       └── sprint/route.ts
-│   └── dashboard/
-│       └── page.tsx                — main dashboard with 5 agent cards
+│   │       ├── prs/route.ts        — [VEDA] PR list for dashboard
+│   │       ├── tickets/route.ts    — [VEDA] ticket list for dashboard
+│   │       └── sprint/route.ts     — [KESHAV] sprint dashboard data
 ├── lib/
-│   ├── mongodb.ts                  — MongoDB client + collection names
-│   ├── lava.ts                     — Lava LLM gateway client + model routing
-│   ├── elevenlabs.ts               — TTS streaming client
-│   ├── auth0.ts                    — Auth0 AI client + token vault helpers
-│   └── voyage.ts                   — Embedding client for Atlas Vector Search
+│   ├── mongodb.ts                  — [DHARMA] MongoDB client + collection constants
+│   ├── lava.ts                     — [DHARMA] Lava gateway client + model routing table
+│   ├── elevenlabs.ts               — [KESHAV] ElevenLabs TTS streaming client
+│   ├── auth0.ts                    — [SAI] Auth0 AI client + token vault helpers
+│   └── voyage.ts                   — [VEDA] Voyage AI embedding client
 ├── components/
-│   ├── AgentCard.tsx               — reusable agent status card
-│   ├── VoicePlayer.tsx             — audio streaming player for briefs
-│   ├── PRBlockerList.tsx           — stale PR list with nudge buttons
-│   ├── ScheduleNegotiator.tsx      — shows real-time slot negotiation steps
-│   └── SprintForecast.tsx          — sprint health + risk visualization
+│   ├── AgentCard.tsx               — [SAI] agent status card (name + last run + badge)
+│   ├── VoicePlayer.tsx             — [SAI] audio player bar for brief streaming
+│   └── ConnectionCard.tsx          — [SAI] OAuth connect/disconnect card for settings
 ├── scripts/
-│   └── seed.ts                     — seed MongoDB with mock data for hackathon
+│   └── seed.ts                     — [DHARMA] seed MongoDB with mock hackathon data
 ├── .env.example
-├── package.json
-└── README.md
+└── package.json
 ```
 
 ---

@@ -6,7 +6,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "seed": "npx ts-node scripts/seed.ts"
+    "seed": "npx ts-node scripts/seed.ts",
+    "test": "jest",
+    "test:dharma": "jest __tests__/dharma.test.ts",
+    "test:keshav": "jest __tests__/keshav.test.ts",
+    "test:veda": "jest __tests__/veda.test.ts",
+    "test:sai": "jest __tests__/sai.test.ts"
   },
   "dependencies": {
     "next": "14.2.0",
@@ -24,6 +29,17 @@
     "typescript": "^5",
     "@types/node": "^20",
     "@types/react": "^18",
-    "ts-node": "^10.9.2"
+    "ts-node": "^10.9.2",
+    "jest": "^29",
+    "@types/jest": "^29",
+    "ts-jest": "^29",
+    "jest-environment-node": "^29"
+  },
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node",
+    "moduleNameMapper": {
+      "^@/(.*)$": "<rootDir>/$1"
+    }
   }
 }
