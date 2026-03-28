@@ -1,0 +1,29 @@
+{
+  "name": "neosis",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "seed": "npx ts-node scripts/seed.ts"
+  },
+  "dependencies": {
+    "next": "14.2.0",
+    "react": "^18",
+    "react-dom": "^18",
+    "mongodb": "^6.5.0",
+    "@auth0/nextjs-auth0": "^3.5.0",
+    "openai": "^4.40.0",
+    "axios": "^1.6.0",
+    "zod": "^3.22.4",
+    "tailwindcss": "^3.4.0",
+    "date-fns": "^3.6.0"
+  },
+  "devDependencies": {
+    "typescript": "^5",
+    "@types/node": "^20",
+    "@types/react": "^18",
+    "ts-node": "^10.9.2"
+  }
+}
