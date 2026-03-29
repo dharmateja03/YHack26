@@ -1,13 +1,75 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb, COLLECTIONS } from "@/lib/mongodb";
+import { getSqliteDbSafe } from "@/lib/sqlite";
 import { lavaChat } from "@/lib/lava";
+import { resolveTeamAwareness } from "@/lib/agent-context";
+
+async function getDbSafe() {
+  try { return await getDb(); } catch { return null; }
+}
+
+function sqlitePrs(teamId: string): any[] {
+  // Synchronous helper — caller awaits getSqliteDbSafe separately
+  return [];
+}
+
+async function loadOpenPrs(teamId: string): Promise<any[]> {
+  const db = await getDbSafe();
+  if (db) {
+    return db.collection(COLLECTIONS.prs).find({ teamId, state: "open" }).toArray();
+  }
+  const sqlite = await getSqliteDbSafe();
+  if (!sqlite) return [];
+  const rows = sqlite
+    .prepare(
+      `SELECT pr_id, title, body, state, author, assignee, reviewers_json,
+              approvals, required_approvals, checks, mergeable, ticket_id,
+              created_at, updated_at
+       FROM prs WHERE team_id = ? AND state = 'open' ORDER BY updated_at DESC`
+    )
+    .all(teamId) as any[];
+  return rows.map((r: any) => ({
+    prId: r.pr_id, title: r.title, body: r.body, state: r.state,
+    author: r.author, assignee: r.assignee,
+    reviewers: (() => { try { return JSON.parse(r.reviewers_json ?? "[]"); } catch { return []; } })(),
+    approvals: r.approvals ?? 0, requiredApprovals: r.required_approvals ?? 1,
+    checks: r.checks ?? "unknown", mergeable: !!r.mergeable,
+    ticketId: r.ticket_id, files: [],
+    createdAt: r.created_at, updatedAt: r.updated_at,
+  }));
+}
+
+async function loadPrById(prId: string): Promise<any | null> {
+  const db = await getDbSafe();
+  if (db) return db.collection(COLLECTIONS.prs).findOne({ prId });
+  const sqlite = await getSqliteDbSafe();
+  if (!sqlite) return null;
+  const r = sqlite.prepare(
+    `SELECT pr_id, title, body, state, author, assignee, reviewers_json,
+            approvals, required_approvals, checks, mergeable, ticket_id,
+            created_at, updated_at, team_id
+     FROM prs WHERE pr_id = ?`
+  ).get(prId) as any;
+  if (!r) return null;
+  return {
+    prId: r.pr_id, title: r.title, body: r.body, state: r.state,
+    author: r.author, assignee: r.assignee, teamId: r.team_id,
+    approvals: r.approvals ?? 0, requiredApprovals: r.required_approvals ?? 1,
+    checks: r.checks ?? "unknown", mergeable: !!r.mergeable,
+    ticketId: r.ticket_id, files: [],
+    updatedAt: r.updated_at,
+  };
+}
 
 // ── GET /api/agents/pr?teamId=xxx ─────────────────────────────────
 // Returns all open PRs with wait hours calculated
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const teamId = searchParams.get("teamId");
-  if (!teamId) return NextResponse.json({ error: "teamId required" }, { status: 400 });
+  const teamCtx = await resolveTeamAwareness({
+    teamId: searchParams.get("teamId") ?? undefined,
+    fallbackTeamId: "team-1",
+  });
+  const teamId = teamCtx.teamId;
 
   const db = await getDb();
   const prs = await db
@@ -36,7 +98,14 @@ export async function GET(req: NextRequest) {
 // ── POST /api/agents/pr ───────────────────────────────────────────
 // Routes to sub-actions based on URL path segment
 export async function POST(req: NextRequest) {
-  const path = new URL(req.url).pathname;
+  const url = new URL(req.url);
+  const path = url.pathname;
+  const action = url.searchParams.get("action");
+
+  if (action === "scan") return handleScan(req);
+  if (action === "route") return handleRoute(req);
+  if (action === "nudge") return handleNudge(req);
+  if (action === "merge-check") return handleMergeCheck(req);
 
   if (path.endsWith("/scan")) return handleScan(req);
   if (path.endsWith("/route")) return handleRoute(req);
@@ -48,8 +117,13 @@ export async function POST(req: NextRequest) {
 
 // ── POST /api/agents/pr/scan ──────────────────────────────────────
 async function handleScan(req: NextRequest) {
-  const { teamId } = await req.json();
-  if (!teamId) return NextResponse.json({ error: "teamId required" }, { status: 400 });
+  const body = await req.json();
+  const teamCtx = await resolveTeamAwareness({
+    userId: body?.userId,
+    teamId: body?.teamId,
+    fallbackTeamId: "team-1",
+  });
+  const teamId = teamCtx.teamId;
 
   const db = await getDb();
   const prs = await db
@@ -86,7 +160,8 @@ async function handleScan(req: NextRequest) {
       content:
         "You are a PR triage agent. Given a list of stale PRs, return a JSON array of blockers. " +
         'Each item: { "prId": string, "reason": string, "urgency": "high"|"medium"|"low", "suggestedAction": string }. ' +
-        "Return only valid JSON.",
+        "Return only valid JSON.\n" +
+        `Team context:\n${teamCtx.orgSummary}`,
     },
     {
       role: "user",
@@ -120,12 +195,18 @@ async function handleScan(req: NextRequest) {
 
 // ── POST /api/agents/pr/route ─────────────────────────────────────
 async function handleRoute(req: NextRequest) {
-  const { prId } = await req.json();
+  const body = await req.json();
+  const { prId } = body;
   if (!prId) return NextResponse.json({ error: "prId required" }, { status: 400 });
 
   const db = await getDb();
   const pr = await db.collection(COLLECTIONS.prs).findOne({ prId });
   if (!pr) return NextResponse.json({ error: "PR not found" }, { status: 404 });
+  const teamCtx = await resolveTeamAwareness({
+    userId: body?.userId,
+    teamId: pr.teamId ?? body?.teamId,
+    fallbackTeamId: "team-1",
+  });
 
   // Find reviewers who have touched the same files in other merged PRs
   const relatedPrs = await db
@@ -155,7 +236,8 @@ async function handleRoute(req: NextRequest) {
       content:
         "You are a reviewer routing agent. Given a PR and a ranked list of candidate reviewers by file history, " +
         "pick the best one and explain why in one sentence. " +
-        'Return JSON: { "suggestedReviewer": string, "reason": string }',
+        'Return JSON: { "suggestedReviewer": string, "reason": string }\n' +
+        `Team context:\n${teamCtx.orgSummary}`,
     },
     {
       role: "user",
@@ -191,13 +273,19 @@ async function handleNudge(req: NextRequest) {
   const db = await getDb();
   const pr = await db.collection(COLLECTIONS.prs).findOne({ prId });
   if (!pr) return NextResponse.json({ error: "PR not found" }, { status: 404 });
+  const teamCtx = await resolveTeamAwareness({
+    userId: body?.userId,
+    teamId: pr.teamId ?? body?.teamId,
+    fallbackTeamId: "team-1",
+  });
 
   const message = await lavaChat("neo-pr", [
     {
       role: "system",
       content:
         "Write a single friendly Slack nudge message asking someone to review a PR. " +
-        "One sentence. Casual tone. No emojis. No markdown.",
+        "One sentence. Casual tone. No emojis. No markdown.\n" +
+        `Team context:\n${teamCtx.orgSummary}`,
     },
     {
       role: "user",

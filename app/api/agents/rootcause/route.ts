@@ -1,6 +1,8 @@
 import { COLLECTIONS, getDb } from "@/lib/mongodb";
 import { lavaChat } from "@/lib/lava";
 import { embed } from "@/lib/voyage";
+import { resolveTeamAwareness } from "@/lib/agent-context";
+import { isPineconeConfigured, queryPineconeByVector } from "@/lib/pinecone";
 
 type EvidenceItem = {
   source: string;
@@ -15,6 +17,30 @@ async function vectorSearch(
   queryVector: number[],
   teamId: string
 ): Promise<{ source: string; id: string; text: string; score: number }[]> {
+  if (isPineconeConfigured()) {
+    try {
+      const matches = await queryPineconeByVector({
+        vector: queryVector,
+        topK: 12,
+        filter: {
+          teamId: { $eq: teamId },
+          source: { $eq: collectionName },
+        },
+      });
+
+      return matches
+        .filter((m) => Number(m.score ?? 0) >= 0.7)
+        .map((m) => ({
+          source: String(m.metadata?.source ?? collectionName),
+          id: String(m.metadata?.docId ?? m.id),
+          text: String(m.metadata?.text ?? ""),
+          score: Number(m.score ?? 0),
+        }));
+    } catch {
+      // fall through to Mongo vector search fallback
+    }
+  }
+
   try {
     const results = await db
       .collection(collectionName)
@@ -47,7 +73,7 @@ async function vectorSearch(
 }
 
 export async function POST(req: Request) {
-  let body: { prId?: string; ticketId?: string };
+  let body: { prId?: string; ticketId?: string; teamId?: string; userId?: string };
   try {
     body = await req.json();
   } catch {
@@ -68,7 +94,12 @@ export async function POST(req: Request) {
     target = await db.collection(COLLECTIONS.tickets).findOne({ ticketId: body.ticketId });
   }
 
-  const teamId = target?.teamId ?? "team-1";
+  const teamCtx = await resolveTeamAwareness({
+    userId: body.userId,
+    teamId: body.teamId,
+    fallbackTeamId: "team-1",
+  });
+  const teamId = target?.teamId ?? teamCtx.teamId;
   const queryText = target
     ? `${target.title ?? ""} ${target.description ?? target.body ?? ""}`
     : (body.prId ?? body.ticketId ?? "");
@@ -126,7 +157,8 @@ export async function POST(req: Request) {
     {
       role: "system",
       content:
-        "You are a root cause analyst for an engineering team. Given evidence from Slack messages, Jira tickets, and GitHub PRs, determine the root cause of a delay or blocker. Cite every source by its ID. Respond in JSON with fields: cause, blockedBy, recommendedAction, evidence (array of {source, id, text}).",
+        "You are a root cause analyst for an engineering team. Given evidence from Slack messages, Jira tickets, and GitHub PRs, determine the root cause of a delay or blocker. Cite every source by its ID. Respond in JSON with fields: cause, blockedBy, recommendedAction, evidence (array of {source, id, text}).\n" +
+        `Team context:\n${teamCtx.orgSummary}`,
     },
     {
       role: "user",
@@ -176,8 +208,11 @@ export async function POST(req: Request) {
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
-  const teamId = searchParams.get("teamId");
-  if (!teamId) return Response.json({ error: "teamId required" }, { status: 400 });
+  const teamCtx = await resolveTeamAwareness({
+    teamId: searchParams.get("teamId") ?? undefined,
+    fallbackTeamId: "team-1",
+  });
+  const teamId = teamCtx.teamId;
 
   const db = await getDb();
   const rows = await db

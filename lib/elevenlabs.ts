@@ -11,6 +11,10 @@ const ELEVENLABS_BASE_URL = "https://api.elevenlabs.io/v1";
 export async function streamSpeech(text: string): Promise<ReadableStream<Uint8Array>> {
   const voiceId =
     process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
+  const modelId = process.env.ELEVENLABS_MODEL_ID || "eleven_turbo_v2";
+  const stability = Number(process.env.ELEVENLABS_STABILITY ?? "0.38");
+  const similarityBoost = Number(process.env.ELEVENLABS_SIMILARITY_BOOST ?? "0.82");
+  const style = Number(process.env.ELEVENLABS_STYLE ?? "0.28");
 
   const apiKey = process.env.ELEVENLABS_API_KEY;
   if (!apiKey) {
@@ -28,11 +32,11 @@ export async function streamSpeech(text: string): Promise<ReadableStream<Uint8Ar
     },
     body: JSON.stringify({
       text,
-      model_id: "eleven_turbo_v2",
+      model_id: modelId,
       voice_settings: {
-        stability: 0.5,
-        similarity_boost: 0.75,
-        style: 0.0,
+        stability,
+        similarity_boost: similarityBoost,
+        style,
         use_speaker_boost: true,
       },
       // Optimize for low latency streaming

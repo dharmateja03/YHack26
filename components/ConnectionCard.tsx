@@ -65,8 +65,8 @@ const INTEGRATIONS: Record<string, {
     ),
   },
   calendar: {
-    label: "Google Calendar",
-    description: "Events · availability · scheduling",
+    label: "Nylas",
+    description: "Gmail + Calendar sync · scheduling",
     accent: "border-green-900/30 hover:border-green-700/50",
     connectedBg: "bg-green-950/15",
     icon: (

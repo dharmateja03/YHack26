@@ -47,9 +47,9 @@ export default function VoicePlayer({ audioUrl }: VoicePlayerProps) {
                   animationName: playing ? "bar-wave" : "none",
                   animationDuration: `${0.45 + i * 0.04}s`,
                   animationTimingFunction: "ease-in-out",
+                  animationDelay: `${i * 0.06}s`,
                   animationIterationCount: "infinite",
                   animationDirection: "alternate",
-                  animationDelay: `${i * 0.06}s`,
                   transition: "transform 0.3s ease, background-color 0.2s",
                 }}
               />

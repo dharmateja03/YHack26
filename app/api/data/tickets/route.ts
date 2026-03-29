@@ -1,12 +1,39 @@
 import { COLLECTIONS, getDb } from "@/lib/mongodb";
+import { getSqliteDbSafe } from "@/lib/sqlite";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const teamId = searchParams.get("teamId");
   if (!teamId) return Response.json({ error: "teamId required" }, { status: 400 });
 
-  const db = await getDb();
-  const rows = await db.collection(COLLECTIONS.tickets).find({ teamId }).toArray();
+  let rows: any[] = [];
+  try {
+    const db = await getDb();
+    rows = await db.collection(COLLECTIONS.tickets).find({ teamId }).toArray();
+  } catch {
+    const sqlite = await getSqliteDbSafe();
+    if (sqlite) {
+      rows = sqlite
+        .prepare(
+          `SELECT ticket_id AS ticketId, title, priority, status, assignee, blocked_by_json AS blockedBy
+           FROM tickets
+           WHERE team_id = ?
+           ORDER BY updated_at DESC
+           LIMIT 300`
+        )
+        .all(teamId)
+        .map((row: any) => ({
+          ...row,
+          blockedBy: (() => {
+            try {
+              return JSON.parse(String(row.blockedBy ?? "[]"));
+            } catch {
+              return [];
+            }
+          })(),
+        }));
+    }
+  }
 
   const tickets = rows.map((t: any) => ({
     ticketId: t.ticketId ?? "",

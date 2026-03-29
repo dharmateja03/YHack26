@@ -1,8 +1,6 @@
 // Dharma — Tests for: lib/mongodb.ts, lib/lava.ts, scripts/seed.ts, Agent 2 (PR), GitHub webhook
 // Run: npx jest __tests__/dharma.test.ts
 
-import { MongoClient } from "mongodb";
-
 // ─── lib/mongodb.ts ───────────────────────────────────────────────
 describe("lib/mongodb", () => {
   test("COLLECTIONS exports all required collection names", async () => {
@@ -17,7 +15,7 @@ describe("lib/mongodb", () => {
     expect(COLLECTIONS.preferences).toBe("preferences");
   });
 
-  test("getDb returns a MongoDB Db instance", async () => {
+  test("getDb returns a DB adapter", async () => {
     const { getDb } = await import("../lib/mongodb");
     const db = await getDb();
     expect(db).toBeDefined();
@@ -29,12 +27,12 @@ describe("lib/mongodb", () => {
 describe("lib/lava", () => {
   test("MODELS has correct model IDs for all agents", async () => {
     const { MODELS } = await import("../lib/lava");
-    expect(MODELS["neo-brief"]).toBe("claude-haiku-4-5-20251001");
-    expect(MODELS["neo-pr"]).toBe("groq/llama-3.1-70b-versatile");
-    expect(MODELS["neo-sched"]).toBe("claude-sonnet-4-6");
-    expect(MODELS["neo-root"]).toBe("claude-sonnet-4-6");
-    expect(MODELS["neo-sprint"]).toBe("claude-sonnet-4-6");
-    expect(MODELS["neo-sprint-notes"]).toBe("groq/llama-3.1-70b-versatile");
+    expect(MODELS["neo-brief"]).toBe("gpt-5-chat-latest");
+    expect(MODELS["neo-pr"]).toBe("gpt-5-chat-latest");
+    expect(MODELS["neo-sched"]).toBe("gpt-5-chat-latest");
+    expect(MODELS["neo-root"]).toBe("gpt-5-chat-latest");
+    expect(MODELS["neo-sprint"]).toBe("gpt-5-chat-latest");
+    expect(MODELS["neo-sprint-notes"]).toBe("gpt-5-chat-latest");
   });
 
   test("lavaChat sends x-lava-agent-id header", async () => {

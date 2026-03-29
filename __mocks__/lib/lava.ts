@@ -3,12 +3,12 @@
 // Route handlers get this instead of the real Lava gateway, so tests run without an API key.
 
 export const MODELS: Record<string, string> = {
-  "neo-brief":        "claude-haiku-4-5-20251001",
-  "neo-pr":           "groq/llama-3.1-70b-versatile",
-  "neo-sched":        "claude-sonnet-4-6",
-  "neo-root":         "claude-sonnet-4-6",
-  "neo-sprint":       "claude-sonnet-4-6",
-  "neo-sprint-notes": "groq/llama-3.1-70b-versatile",
+  "neo-brief":        "gpt-5-chat-latest",
+  "neo-pr":           "gpt-5-chat-latest",
+  "neo-sched":        "gpt-5-chat-latest",
+  "neo-root":         "gpt-5-chat-latest",
+  "neo-sprint":       "gpt-5-chat-latest",
+  "neo-sprint-notes": "gpt-5-chat-latest",
 };
 
 export interface ChatMessage {

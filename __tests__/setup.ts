@@ -54,23 +54,28 @@ jest.mock("../lib/mongodb", () => ({
     prs: "prs",
     tickets: "tickets",
     messages: "messages",
+    emails: "emails",
     calendars: "calendars",
     briefs: "briefs",
     sprints: "sprints",
     agents: "agents",
     preferences: "preferences",
+    conversations: "conversations",
+    organizations: "organizations",
+    orgMembers: "org_members",
+    orgInvites: "org_invites",
   },
 }));
 
 // Mock lavaChat — return deterministic JSON for each agent
 jest.mock("../lib/lava", () => ({
   MODELS: {
-    "neo-brief": "claude-haiku-4-5-20251001",
-    "neo-pr": "groq/llama-3.1-70b-versatile",
-    "neo-sched": "claude-sonnet-4-6",
-    "neo-root": "claude-sonnet-4-6",
-    "neo-sprint": "claude-sonnet-4-6",
-    "neo-sprint-notes": "groq/llama-3.1-70b-versatile",
+    "neo-brief": "gpt-5-chat-latest",
+    "neo-pr": "gpt-5-chat-latest",
+    "neo-sched": "gpt-5-chat-latest",
+    "neo-root": "gpt-5-chat-latest",
+    "neo-sprint": "gpt-5-chat-latest",
+    "neo-sprint-notes": "gpt-5-chat-latest",
   },
   lavaChat: jest.fn().mockImplementation((agentId: string) => {
     if (agentId === "neo-pr")

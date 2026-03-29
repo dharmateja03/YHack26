@@ -6,12 +6,20 @@ type Integration = "github" | "slack" | "jira" | "calendar";
 // In-memory vault for dev/test; in production swap for Auth0 Management API calls
 const vault = new Map<string, string>();
 
+function isMasterDevUser(userId: string): boolean {
+  const master = process.env.MASTER_USER_ID?.trim();
+  return Boolean(master && userId === master);
+}
+
 export async function getTokenForUser(
   userId: string,
   integration: Integration | string
 ): Promise<string | null> {
   const key = `${userId}:${integration}`;
   if (vault.has(key)) return vault.get(key)!;
+
+  // Local dev master account should stay fully local for speed/reliability.
+  if (isMasterDevUser(userId)) return null;
 
   // Production: retrieve from Auth0 token vault via Management API
   if (
@@ -62,6 +70,9 @@ export async function saveToken(
 ): Promise<void> {
   const key = `${userId}:${integration}`;
   vault.set(key, token);
+
+  // Local dev master account should stay fully local for speed/reliability.
+  if (isMasterDevUser(userId)) return;
 
   // Production: persist to Auth0 app_metadata via Management API
   if (

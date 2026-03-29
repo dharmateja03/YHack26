@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getDb, COLLECTIONS } from "@/lib/mongodb";
 import { lavaChat } from "@/lib/lava";
 import { streamSpeech } from "@/lib/elevenlabs";
+import { resolveTeamAwareness } from "@/lib/agent-context";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -26,10 +27,33 @@ interface RetroDraft {
   createdAt: Date;
 }
 
+function isDbUnavailableError(error: any): boolean {
+  const msg = String(error?.message ?? "").toLowerCase();
+  return (
+    msg.includes("db_unavailable") ||
+    msg.includes("mongoserverselectionerror") ||
+    msg.includes("tlsv1 alert") ||
+    msg.includes("querysrv") ||
+    msg.includes("connection timed out")
+  );
+}
+
 // ─── POST handler — routes to sub-actions based on pathname ──────────────────
 
 export async function POST(req: Request): Promise<Response> {
-  const pathname = new URL(req.url).pathname;
+  const url = new URL(req.url);
+  const pathname = url.pathname;
+  const action = url.searchParams.get("action");
+
+  if (action === "forecast") {
+    return handleForecast(req);
+  }
+  if (action === "release-notes") {
+    return handleReleaseNotes(req);
+  }
+  if (action === "retro") {
+    return handleRetro(req);
+  }
 
   if (pathname.endsWith("/forecast")) {
     return handleForecast(req);
@@ -52,14 +76,11 @@ export async function POST(req: Request): Promise<Response> {
 export async function GET(req: Request): Promise<Response> {
   try {
     const { searchParams } = new URL(req.url);
-    const teamId = searchParams.get("teamId");
-
-    if (!teamId) {
-      return NextResponse.json(
-        { error: "teamId is required" },
-        { status: 400 },
-      );
-    }
+    const teamCtx = await resolveTeamAwareness({
+      teamId: searchParams.get("teamId") ?? undefined,
+      fallbackTeamId: "team-1",
+    });
+    const teamId = teamCtx.teamId;
 
     const db = await getDb();
 
@@ -112,6 +133,13 @@ export async function GET(req: Request): Promise<Response> {
       },
     });
   } catch (error: any) {
+    if (isDbUnavailableError(error)) {
+      return NextResponse.json({
+        sprint: null,
+        message: "Database unavailable. Showing no sprint data for now.",
+        degraded: true,
+      });
+    }
     console.error("[sprint GET] Error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
@@ -122,14 +150,12 @@ export async function GET(req: Request): Promise<Response> {
 async function handleForecast(req: Request): Promise<Response> {
   try {
     const body = await req.json();
-    const { teamId } = body;
-
-    if (!teamId) {
-      return NextResponse.json(
-        { error: "teamId is required" },
-        { status: 400 },
-      );
-    }
+    const teamCtx = await resolveTeamAwareness({
+      userId: body?.userId,
+      teamId: body?.teamId,
+      fallbackTeamId: "team-1",
+    });
+    const teamId = teamCtx.teamId;
 
     const db = await getDb();
     const now = new Date();
@@ -209,7 +235,10 @@ Based on the sprint data below, produce a JSON forecast with these exact fields:
 Respond ONLY with valid JSON. No explanation, no markdown.
 
 Sprint data:
-${contextSummary}`;
+${contextSummary}
+
+Team roster context:
+${teamCtx.orgSummary}`;
 
     const raw = await lavaChat("neo-sprint", [
       { role: "user", content: prompt },
@@ -275,6 +304,15 @@ ${contextSummary}`;
 
     return NextResponse.json(forecast);
   } catch (error: any) {
+    if (isDbUnavailableError(error)) {
+      return NextResponse.json({
+        onTrack: false,
+        pointsAtRisk: 0,
+        bottleneck: "Live sprint data is temporarily unavailable.",
+        recommendation: "Check MongoDB connection and retry in a minute.",
+        degraded: true,
+      });
+    }
     console.error("[sprint/forecast] Error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
@@ -285,11 +323,17 @@ ${contextSummary}`;
 async function handleReleaseNotes(req: Request): Promise<Response> {
   try {
     const body = await req.json();
-    const { teamId, sprintId } = body;
+    const sprintId = body?.sprintId;
+    const teamCtx = await resolveTeamAwareness({
+      userId: body?.userId,
+      teamId: body?.teamId,
+      fallbackTeamId: "team-1",
+    });
+    const teamId = teamCtx.teamId;
 
-    if (!teamId || !sprintId) {
+    if (!sprintId) {
       return NextResponse.json(
-        { error: "teamId and sprintId are required" },
+        { error: "sprintId is required" },
         { status: 400 },
       );
     }
@@ -331,7 +375,10 @@ Guidelines:
 - Group related changes. Use complete sentences.
 
 Merged PRs for this sprint:
-${prList}`;
+${prList}
+
+Team roster context:
+${teamCtx.orgSummary}`;
 
     const raw = await lavaChat("neo-sprint-notes", [
       { role: "user", content: prompt },
@@ -373,11 +420,17 @@ ${prList}`;
 async function handleRetro(req: Request): Promise<Response> {
   try {
     const body = await req.json();
-    const { teamId, sprintId } = body;
+    const sprintId = body?.sprintId;
+    const teamCtx = await resolveTeamAwareness({
+      userId: body?.userId,
+      teamId: body?.teamId,
+      fallbackTeamId: "team-1",
+    });
+    const teamId = teamCtx.teamId;
 
-    if (!teamId || !sprintId) {
+    if (!sprintId) {
       return NextResponse.json(
-        { error: "teamId and sprintId are required" },
+        { error: "sprintId is required" },
         { status: 400 },
       );
     }
@@ -451,7 +504,10 @@ Guidelines:
 - Write in plain prose, not bullet points. Be specific where data supports it.
 
 Sprint data:
-${contextSummary}`;
+${contextSummary}
+
+Team roster context:
+${teamCtx.orgSummary}`;
 
     const raw = await lavaChat("neo-sprint-notes", [
       { role: "user", content: prompt },

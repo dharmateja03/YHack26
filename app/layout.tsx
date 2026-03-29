@@ -18,13 +18,29 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <span className="text-xl tracking-tight text-white" style={{ fontFamily: "'Instrument Serif', serif" }}>
               Neos<span className="text-cyan-400">is</span>
             </span>
-            <Link
-              href="/settings"
-              className="text-[10px] tracking-[0.25em] uppercase text-zinc-500 hover:text-cyan-400 transition-colors duration-200"
-              style={{ fontFamily: "'JetBrains Mono', monospace" }}
-            >
-              Settings
-            </Link>
+            <div className="flex items-center gap-4">
+              <Link
+                href="/dashboard"
+                className="text-[10px] tracking-[0.25em] uppercase text-zinc-500 hover:text-cyan-400 transition-colors duration-200"
+                style={{ fontFamily: "'JetBrains Mono', monospace" }}
+              >
+                Dashboard
+              </Link>
+              <Link
+                href="/auth"
+                className="text-[10px] tracking-[0.25em] uppercase text-zinc-500 hover:text-cyan-400 transition-colors duration-200"
+                style={{ fontFamily: "'JetBrains Mono', monospace" }}
+              >
+                Account
+              </Link>
+              <Link
+                href="/settings"
+                className="text-[10px] tracking-[0.25em] uppercase text-zinc-500 hover:text-cyan-400 transition-colors duration-200"
+                style={{ fontFamily: "'JetBrains Mono', monospace" }}
+              >
+                Settings
+              </Link>
+            </div>
           </nav>
           <main className="pt-[65px]">{children}</main>
         </UserProvider>

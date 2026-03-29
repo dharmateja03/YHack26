@@ -37,7 +37,7 @@ export default function AgentCard({ name, lastRun, status }: AgentCardProps) {
     <div
       className={`group relative flex items-center gap-4 px-4 py-3 rounded-lg border transition-all duration-200
         ${status === "running"
-          ? "bg-cyan-950/15 border-cyan-500/25"
+          ? "bg-cyan-950/15 border-cyan-500/25 agent-active"
           : "bg-zinc-950 border-zinc-800/50 hover:bg-zinc-900/60 hover:border-zinc-700/70"
         }`}
     >

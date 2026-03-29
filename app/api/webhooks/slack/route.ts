@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getDb, COLLECTIONS } from "@/lib/mongodb";
 import { embed } from "@/lib/voyage";
+import { upsertVectorDoc } from "@/lib/vector-store";
+import { getSqliteDbSafe } from "@/lib/sqlite";
 
 // ─── Slack URL verification challenge ─────────────────────────────────────
 // Slack sends this once when you register the Events API endpoint.
@@ -91,11 +93,60 @@ async function ingestMessage(
     }
   }
 
-  const db = await getDb();
+  let persistedToSqlite = false;
+  try {
+    const db = await getDb();
+    await db
+      .collection(COLLECTIONS.messages)
+      .updateOne({ messageId }, { $set: messageDoc }, { upsert: true });
+  } catch {
+    const sqlite = await getSqliteDbSafe();
+    if (sqlite) {
+      sqlite
+        .prepare(
+          `INSERT INTO messages
+           (message_id, team_id, channel_id, author, text, mentions_json, thread_id, created_at, embedding_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(message_id) DO UPDATE SET
+             team_id = excluded.team_id,
+             channel_id = excluded.channel_id,
+             author = excluded.author,
+             text = excluded.text,
+             mentions_json = excluded.mentions_json,
+             thread_id = excluded.thread_id,
+             created_at = excluded.created_at,
+             embedding_json = excluded.embedding_json`
+        )
+        .run(
+          messageId,
+          teamId || "team-1",
+          channelId,
+          author,
+          text,
+          JSON.stringify(mentions),
+          threadId,
+          createdAt.toISOString(),
+          Array.isArray(messageDoc.embedding) ? JSON.stringify(messageDoc.embedding) : null
+        );
+      persistedToSqlite = true;
+    }
+  }
 
-  await db
-    .collection(COLLECTIONS.messages)
-    .updateOne({ messageId }, { $set: messageDoc }, { upsert: true });
+  if (Array.isArray(messageDoc.embedding)) {
+    await upsertVectorDoc({
+      source: COLLECTIONS.messages,
+      id: messageId,
+      teamId: teamId || "team-1",
+      text,
+      embedding: messageDoc.embedding as number[],
+    });
+    if (persistedToSqlite) {
+      const sqlite = await getSqliteDbSafe();
+      sqlite
+        ?.prepare("UPDATE messages SET embedding_json = ? WHERE message_id = ?")
+        .run(JSON.stringify(messageDoc.embedding), messageId);
+    }
+  }
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────

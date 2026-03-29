@@ -67,6 +67,48 @@ body {
 .slide-up     { animation: slide-up 0.35s cubic-bezier(0.16,1,0.3,1) forwards; }
 .fade-up      { animation: fade-up 0.4s ease-out forwards; }
 
+/* Typing cursor blink */
+@keyframes cursor-blink {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0; }
+}
+.typing-cursor {
+  display: inline;
+  color: rgb(6, 182, 212);
+  font-weight: 300;
+  animation: cursor-blink 0.6s ease-in-out infinite;
+  margin-left: 1px;
+}
+
+/* Message appear */
+@keyframes msg-appear {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.msg-appear {
+  animation: msg-appear 0.3s cubic-bezier(0.16,1,0.3,1) forwards;
+}
+
+/* Thinking phrase crossfade */
+@keyframes thinking-fade {
+  0%   { opacity: 0; transform: translateY(4px); }
+  15%  { opacity: 1; transform: translateY(0); }
+  85%  { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-4px); }
+}
+.thinking-fade {
+  animation: thinking-fade 1.8s ease-in-out infinite;
+}
+
+/* Agent card active glow */
+@keyframes agent-glow {
+  0%, 100% { box-shadow: 0 0 8px rgba(6,182,212,0.15), inset 0 0 8px rgba(6,182,212,0.05); }
+  50%       { box-shadow: 0 0 20px rgba(6,182,212,0.3), inset 0 0 15px rgba(6,182,212,0.1); }
+}
+.agent-active {
+  animation: agent-glow 1.5s ease-in-out infinite;
+}
+
 /* subtle scanline texture */
 .scanlines::after {
   content: '';
