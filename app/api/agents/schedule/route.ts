@@ -2,6 +2,7 @@
 // Handles: /find /book /cancel /reschedule (POST) and /availability (GET)
 
 import { randomUUID } from "crypto";
+import { findMutualSlotWithHermes } from "@/lib/hermes";
 
 interface CalendarEvent {
   eventId: string;
@@ -89,6 +90,15 @@ async function findFreeSlot(
     const events = await getEventsForUser(uid);
     allEvents.push(...events.map((e) => ({ start: e.start, end: e.end })));
   }
+
+  // Optional Hermes delegation for agent-to-agent scheduling.
+  const hermesSlot = await findMutualSlotWithHermes({
+    participantIds,
+    durationMins,
+    preferredTime,
+    busyBlocks: allEvents,
+  });
+  if (hermesSlot) return hermesSlot;
 
   // Try Lava/Claude for smart negotiation if API key available
   if (process.env.LAVA_API_KEY) {
