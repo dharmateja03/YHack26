@@ -1,4 +1,5 @@
 import { COLLECTIONS, getDb } from "@/lib/mongodb";
+import { lavaChat } from "@/lib/lava";
 import { embed } from "@/lib/voyage";
 
 type EvidenceItem = {
@@ -7,26 +8,42 @@ type EvidenceItem = {
   text: string;
 };
 
-function cosineSimilarity(a: number[], b: number[]): number {
-  if (a.length === 0 || b.length === 0 || a.length !== b.length) return 0;
-  let dot = 0;
-  let normA = 0;
-  let normB = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
-  }
-  if (normA === 0 || normB === 0) return 0;
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
-}
+async function vectorSearch(
+  db: any,
+  collectionName: string,
+  indexName: string,
+  queryVector: number[],
+  teamId: string
+): Promise<{ source: string; id: string; text: string; score: number }[]> {
+  try {
+    const results = await db
+      .collection(collectionName)
+      .aggregate([
+        {
+          $vectorSearch: {
+            index: indexName,
+            path: "embedding",
+            queryVector,
+            numCandidates: 50,
+            limit: 10,
+            filter: { teamId },
+          },
+        },
+        { $addFields: { score: { $meta: "vectorSearchScore" } } },
+        { $match: { score: { $gte: 0.7 } } },
+      ])
+      .toArray();
 
-function evidenceFromMessages(messages: any[]): EvidenceItem[] {
-  return messages.slice(0, 3).map((m, idx) => ({
-    source: "slack",
-    id: String(m.id ?? m.messageId ?? m.ts ?? `msg-${idx + 1}`),
-    text: String(m.text ?? ""),
-  }));
+    return results.map((r: any) => ({
+      source: collectionName,
+      id: String(r.messageId ?? r.prId ?? r.ticketId ?? r._id),
+      text: String(r.text ?? r.title ?? r.description ?? ""),
+      score: r.score,
+    }));
+  } catch {
+    // Fallback: if vector search is unavailable, return empty
+    return [];
+  }
 }
 
 export async function POST(req: Request) {
@@ -42,42 +59,119 @@ export async function POST(req: Request) {
   }
 
   const db = await getDb();
-  const queryId = body.prId ?? body.ticketId ?? "";
-  const queryVector = await embed(queryId);
 
-  const messages = await db.collection(COLLECTIONS.messages).find({}).toArray();
-  const scored = await Promise.all(
-    messages.map(async (m) => {
-      const text = `${m.text ?? ""} ${m.channel ?? ""} ${m.user ?? ""}`.trim();
-      const vector = await embed(text || "empty");
-      return { message: m, similarity: cosineSimilarity(queryVector, vector) };
-    })
-  );
+  // Step 1: Get the target PR or ticket
+  let target: any = null;
+  if (body.prId) {
+    target = await db.collection(COLLECTIONS.prs).findOne({ prId: body.prId });
+  } else if (body.ticketId) {
+    target = await db.collection(COLLECTIONS.tickets).findOne({ ticketId: body.ticketId });
+  }
 
-  scored.sort((a, b) => b.similarity - a.similarity);
-  const top = scored.slice(0, 3);
-  const best = top[0]?.similarity ?? 0;
-  const confident = best >= 0.7 && top.length > 0;
-  const evidence = confident ? evidenceFromMessages(top.map((t) => t.message)) : [];
+  const teamId = target?.teamId ?? "team-1";
+  const queryText = target
+    ? `${target.title ?? ""} ${target.description ?? target.body ?? ""}`
+    : (body.prId ?? body.ticketId ?? "");
 
-  const cause = confident
-    ? "Likely blocked by unresolved dependency discussed in team messages."
-    : "Insufficient high-similarity evidence to determine a root cause confidently.";
-  const blockedBy = confident ? "Cross-team review/dependency wait" : "unknown";
-  const recommendedAction = confident
-    ? "Escalate to owner and schedule a 15-minute unblock sync."
-    : "Collect more context from PR comments and ticket updates.";
+  // Step 2: Embed the title + description
+  const queryVector = await embed(queryText);
+
+  // Step 3: Run Atlas Vector Search across messages, tickets, prs
+  const [msgResults, ticketResults, prResults] = await Promise.all([
+    vectorSearch(db, COLLECTIONS.messages, "messages_vector", queryVector, teamId),
+    vectorSearch(db, COLLECTIONS.tickets, "tickets_vector", queryVector, teamId),
+    vectorSearch(db, COLLECTIONS.prs, "prs_vector", queryVector, teamId),
+  ]);
+
+  const allEvidence = [...msgResults, ...ticketResults, ...prResults]
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 10);
+
+  const bestScore = allEvidence[0]?.score ?? 0;
+
+  // Step 4: If best similarity < 0.7, return partial evidence
+  if (bestScore < 0.7 || allEvidence.length === 0) {
+    const partial: EvidenceItem[] = allEvidence.map((e) => ({
+      source: e.source,
+      id: e.id,
+      text: e.text,
+    }));
+
+    const result = {
+      cause: "Insufficient high-similarity evidence to determine a root cause confidently.",
+      blockedBy: "unknown",
+      recommendedAction: "Collect more context from PR comments and ticket updates.",
+      evidence: partial,
+      confident: false,
+    };
+
+    await db.collection(COLLECTIONS.agents).insertOne({
+      agent: "neo-root",
+      action: "rootcause",
+      input: body,
+      output: result,
+      teamId,
+      createdAt: new Date(),
+    });
+
+    return Response.json(result);
+  }
+
+  // Step 5: Call lavaChat with all retrieved context
+  const contextBlock = allEvidence
+    .map((e) => `[${e.source}:${e.id}] ${e.text}`)
+    .join("\n");
+
+  const llmResponse = await lavaChat("neo-root", [
+    {
+      role: "system",
+      content:
+        "You are a root cause analyst for an engineering team. Given evidence from Slack messages, Jira tickets, and GitHub PRs, determine the root cause of a delay or blocker. Cite every source by its ID. Respond in JSON with fields: cause, blockedBy, recommendedAction, evidence (array of {source, id, text}).",
+    },
+    {
+      role: "user",
+      content: `Analyze why this is blocked:\nTarget: ${queryText}\n\nEvidence:\n${contextBlock}\n\nRespond in JSON.`,
+    },
+  ]);
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(llmResponse);
+  } catch {
+    parsed = {
+      cause: llmResponse,
+      blockedBy: "unknown",
+      recommendedAction: "Review the evidence manually.",
+      evidence: allEvidence.map((e) => ({ source: e.source, id: e.id, text: e.text })),
+    };
+  }
+
+  const evidence: EvidenceItem[] = Array.isArray(parsed.evidence)
+    ? parsed.evidence.map((e: any) => ({
+        source: String(e.source ?? "unknown"),
+        id: String(e.id ?? ""),
+        text: String(e.text ?? ""),
+      }))
+    : allEvidence.map((e) => ({ source: e.source, id: e.id, text: e.text }));
+
+  const result = {
+    cause: String(parsed.cause ?? ""),
+    blockedBy: String(parsed.blockedBy ?? "unknown"),
+    recommendedAction: String(parsed.recommendedAction ?? ""),
+    evidence,
+    confident: true,
+  };
 
   await db.collection(COLLECTIONS.agents).insertOne({
     agent: "neo-root",
     action: "rootcause",
     input: body,
-    output: { cause, blockedBy, recommendedAction, evidence, confident },
-    teamId: "team-1",
+    output: result,
+    teamId,
     createdAt: new Date(),
   });
 
-  return Response.json({ cause, blockedBy, recommendedAction, evidence, confident });
+  return Response.json(result);
 }
 
 export async function GET(req: Request) {
@@ -93,11 +187,11 @@ export async function GET(req: Request) {
 
   const history = rows
     .sort(
-      (a, b) =>
+      (a: any, b: any) =>
         new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime()
     )
     .slice(0, 20)
-    .map((r) => ({
+    .map((r: any) => ({
       createdAt: r.createdAt ?? null,
       input: r.input ?? {},
       result: r.output ?? {},
@@ -105,4 +199,3 @@ export async function GET(req: Request) {
 
   return Response.json({ history });
 }
-
