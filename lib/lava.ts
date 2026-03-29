@@ -5,7 +5,7 @@ function getClient(): OpenAI {
   if (!_client) {
     _client = new OpenAI({
       apiKey: process.env.LAVA_API_KEY ?? "placeholder",
-      baseURL: process.env.LAVA_BASE_URL ?? "https://gateway.lava.so/v1",
+      baseURL: process.env.LAVA_BASE_URL ?? "https://api.lava.so/v1",
     });
   }
   return _client;

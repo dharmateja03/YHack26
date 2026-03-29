@@ -104,7 +104,7 @@ async function findFreeSlot(
   if (process.env.LAVA_API_KEY) {
     try {
       const prompt = `Given these busy blocks: ${JSON.stringify(allEvents)}, find a ${durationMins}-minute free slot for participants ${participantIds.join(", ")}${preferredTime ? ` preferring around ${preferredTime}` : ""}. Return JSON: {"start": "ISO string", "end": "ISO string"}`;
-      const res = await fetch(`${process.env.LAVA_BASE_URL ?? "https://gateway.lava.so/v1"}/chat/completions`, {
+      const res = await fetch(`${process.env.LAVA_BASE_URL ?? "https://api.lava.so/v1"}/chat/completions`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${process.env.LAVA_API_KEY}`,
