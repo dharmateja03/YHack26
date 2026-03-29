@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
   }
 
   const session = await getSessionUser();
-  const isAuthenticatedSession = session?.source === "auth0" || session?.source === "basic";
+  const isAuthenticatedSession = session?.source === "basic" || session?.source === "master";
   const resolvedSessionUserId =
     isAuthenticatedSession && session?.userId
       ? await resolveOrgMemberUserId({

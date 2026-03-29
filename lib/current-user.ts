@@ -2,7 +2,7 @@ export interface SessionUser {
   userId: string;
   name?: string;
   email?: string;
-  source?: "basic" | "auth0" | "dev_cookie" | "master";
+  source?: "basic" | "dev_cookie" | "master";
 }
 
 export async function getSessionUser(): Promise<SessionUser | null> {
@@ -18,22 +18,6 @@ export async function getSessionUser(): Promise<SessionUser | null> {
         name: parsed.name,
         email: parsed.email,
         source: "basic",
-      };
-    }
-  } catch {
-    // fall through
-  }
-
-  try {
-    const { getSession } = await import("@auth0/nextjs-auth0");
-    const session = await getSession();
-    const user = session?.user;
-    if (user?.sub) {
-      return {
-        userId: user.sub,
-        name: user.name,
-        email: user.email,
-        source: "auth0",
       };
     }
   } catch {

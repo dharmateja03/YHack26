@@ -1,31 +1,25 @@
 /**
- * Hermes — The Orchestrator Brain
+ * Hermes — Deterministic Intent Router
  *
- * LLM-powered intent router that replaces keyword matching.
- * Gathers required info through multi-turn conversation, then delegates to sub-agents.
+ * Fast, rule-based intent classification that delegates to sub-agents.
+ * No LLM in the routing loop — general questions go straight to the
+ * chat LLM which already has full context.
  */
-
-import { lavaChat } from "./lava";
 
 // ── Types ────────────────────────────────────────────────────────────
 
 export interface HermesDecision {
   action: "ask" | "delegate" | "chat";
-  /** When action is "ask" — the question to ask the user */
   question?: string;
-  /** When action is "delegate" — which agent to route to */
   agent?: string;
   endpoint?: string;
   agentAction?: string;
   payload?: Record<string, unknown>;
-  /** Data extracted from conversation so far */
   extracted?: Record<string, unknown>;
-  /** Which agent we're gathering info for */
   gatheringFor?: string;
   confidence?: number;
 }
 
-// Backward-compatible export — schedule route still imports this
 export interface HermesScheduleInput {
   participantIds: string[];
   durationMins: number;
@@ -33,84 +27,78 @@ export interface HermesScheduleInput {
   busyBlocks: { start: string; end: string }[];
 }
 
-/** @deprecated Slot-finding now handled by algorithmic approach in schedule agent. */
+/** @deprecated Slot-finding handled by algorithmic approach in schedule agent. */
 export async function findMutualSlotWithHermes(
-  _input: HermesScheduleInput
+  _input: HermesScheduleInput,
 ): Promise<{ start: string; end: string } | null> {
   return null;
 }
 
-// ── Orchestrator system prompt ───────────────────────────────────────
+// ── Intent detectors ─────────────────────────────────────────────────
 
-const HERMES_SYSTEM = `You are Hermes, the orchestrator brain of Neo — an AI executive assistant for engineering teams.
+function isSchedulingIntent(text: string): boolean {
+  return /\b(schedule|reschedule|book|set up a meeting|cancel meeting|cancel the meeting)\b/i.test(text)
+    || /\b(meeting|call|sync)\b.*\bwith\b/i.test(text)
+    || /\bmeet(?:ing)?\s+with\b/i.test(text);
+}
 
-Your job: analyze the user's message in context of the conversation, gather any missing info through natural questions, and delegate to the right sub-agent when you have everything needed.
+function isPrIntent(text: string): boolean {
+  return /\b(pr|pull request|PRs|pull requests|code review|merge|mergeable)\b/i.test(text)
+    && /\b(scan|triage|open|status|review|list|check|route|nudge|what|how|tell|show|any)\b/i.test(text);
+}
 
-## Available Agents
+function isSprintIntent(text: string): boolean {
+  return /\b(sprint|velocity|forecast|burndown|iteration)\b/i.test(text)
+    && /\b(status|how|what|tell|show|looking|track|forecast|progress)\b/i.test(text);
+}
 
-1. **neo-sched** (endpoint: "schedule", action: "orchestrate")
-   Schedules meetings. REQUIRED before delegating:
-   - participants: who to meet with (name or email) — MUST HAVE
-   - title: meeting title/topic — default to "Quick sync" if missing
-   - preferredTime: when they'd prefer (optional)
-   - durationMins: how long in minutes (default 30 if not said)
-   - meetingPriority: default 3 if user doesn't specify
+function isBriefIntent(text: string): boolean {
+  return /\b(brief|briefing|morning brief|daily brief|evening brief|debrief|catch me up|catch up)\b/i.test(text);
+}
 
-2. **neo-pr** (endpoint: "pr", action: "scan")
-   PR triage and review routing. Needs: teamId (use default if not specified).
+function isMailIntent(text: string): boolean {
+  return /\b(email|inbox|mail|unread|messages)\b/i.test(text)
+    && /\b(summary|summarize|check|what|any|show|list|new)\b/i.test(text);
+}
 
-3. **neo-sprint** (endpoint: "sprint", action: "forecast")
-   Sprint forecasting and velocity tracking. Needs: teamId.
+function isSendMailIntent(text: string): boolean {
+  return (
+    /\b(send|write|draft|compose|fire off|shoot)\b/i.test(text)
+    && /\b(email|mail|message)\b/i.test(text)
+  ) || /\bemail\s+\S+.*\b(about|regarding|saying|that)\b/i.test(text);
+}
 
-4. **neo-root** (endpoint: "rootcause")
-   Root cause analysis on blocked work. Needs: prId or ticketId (extract from message).
+function isCalendarCheckIntent(text: string): boolean {
+  return (
+    /\b(calendar|schedule|agenda|events?)\b/i.test(text)
+    && /\b(check|show|what|any|today|tomorrow|this week|my|free|busy|open|look)\b/i.test(text)
+    && !/\b(schedule|book|set up)\b.*\bwith\b/i.test(text)
+  );
+}
 
-5. **neo-brief** (endpoint: "brief")
-   Daily briefings — morning or evening. Needs: userId, type.
+function isRootCauseIntent(text: string): boolean {
+  return /\b(root cause|blocked|why is|what.s blocking|blocker|stuck)\b/i.test(text)
+    && /\b(pr-?\d+|tk-?\d+|ticket-?\d+)\b/i.test(text);
+}
 
-6. **neo-mail** (endpoint: "mail", action: "summarize")
-   Email/inbox summary. No special params.
-
-## Critical Rules
-
-1. **SCHEDULING**: Ask ONLY for truly missing required data. Do not ask filler questions. Default missing non-critical values instead of blocking.
-2. **CONTEXT AWARENESS**: Read the conversation history. If the user already gave info (name, priority, time), extract it — don't re-ask.
-3. **PROGRESSIVE EXTRACTION**: As the user answers, accumulate extracted data in the "extracted" field so nothing is lost between turns.
-4. **NAME RESOLUTION**: When the user says a first name like "John", put it in participants as-is — the system resolves it to a user ID.
-4a. **NO SPELLING QUESTIONS**: Never ask users to spell a teammate's name/email if org roster contains a clear single match by first name, full name, email, or userId.
-4b. **YES/NO FOLLOW-UPS**: If user says "yes/no/yeah/no thanks", treat it as answer to the most recent assistant question in the active flow.
-5. **GENERAL CHAT**: If the message doesn't need any agent (greetings, general questions, follow-ups on previous data), return action "chat".
-6. **BREVITY**: Questions should be 1 sentence. Natural, spoken-friendly. Use contractions.
-7. **AVOID LOOPS**: Never ask the same missing field twice if user already answered in prior turns.
-
-## Response Format — STRICT JSON ONLY
-
-When asking a question (need more info):
-{"action":"ask","question":"What priority is this — urgent or can it wait a few days?","gatheringFor":"neo-sched","extracted":{"participants":["john"],"title":"sync"},"confidence":0.4}
-
-When ready to delegate (have all required info):
-{"action":"delegate","agent":"neo-sched","endpoint":"schedule","agentAction":"orchestrate","payload":{"requesterUserId":"USER_ID","prompt":"original request","participants":[{"userId":"john","priority":4}],"title":"Sprint planning sync","meetingPriority":4,"preferredTime":"tomorrow afternoon","durationMins":30},"confidence":0.9}
-
-When it's general conversation:
-{"action":"chat","confidence":1.0}
-
-RESPOND WITH JSON ONLY. No markdown fences, no explanation outside the JSON object.`;
+// ── Scheduling helpers ───────────────────────────────────────────────
 
 function isLikelyYesNoReply(text: string): boolean {
   const t = text.trim().toLowerCase();
   return /^(yes|yeah|yep|no|nah|no thanks|no thank you|sure|ok|okay)\b/.test(t);
 }
 
-function detectActiveScheduleFlow(history: { role: string; content: string }[]): boolean {
+function detectActiveScheduleFlow(
+  history: { role: string; content: string }[],
+): boolean {
   const recent = history.slice(-8);
   const joined = recent.map((t) => t.content.toLowerCase()).join("\n");
-  const hasSchedulingTopic = /(schedule|meeting|meet|call|book|reschedule|priority|duration|agenda)/.test(joined);
-  const hasQuestion = recent.some((t) => t.role === "assistant" && /\?/.test(t.content));
+  const hasSchedulingTopic =
+    /(schedule|meeting|meet|call|book|reschedule|priority|duration|agenda)/.test(joined);
+  const hasQuestion = recent.some(
+    (t) => t.role === "assistant" && /\?/.test(t.content),
+  );
   return hasSchedulingTopic && hasQuestion;
-}
-
-function isSchedulingIntent(text: string): boolean {
-  return /\b(schedule|reschedule|book|meeting|call|meet)\b/i.test(text);
 }
 
 function normalizeParticipantToken(token: string): string {
@@ -125,17 +113,24 @@ function extractParticipantsFromText(text: string): string[] {
   const out: string[] = [];
   const lower = text.toLowerCase();
 
-  const emails = lower.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/g) ?? [];
+  const emails =
+    lower.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/g) ?? [];
   out.push(...emails.map(normalizeParticipantToken));
 
   const withMatches = Array.from(
-    lower.matchAll(/\b(?:with|meet(?:ing)? with|call with|schedule with)\s+([a-z0-9@._\-\s,]+?)(?=\s+(?:at|on|today|tomorrow|next|this)\b|$)/gi)
+    lower.matchAll(
+      /\b(?:with|meet(?:ing)? with|call with|schedule with)\s+([a-z0-9@._\-\s,]+?)(?=\s+(?:at|on|today|tomorrow|next|this)\b|$)/gi,
+    ),
   );
   for (const m of withMatches) {
     const raw = String(m[1] ?? "");
     for (const part of raw.split(/,| and /g)) {
       const cleaned = normalizeParticipantToken(part);
-      if (!cleaned || ["uh", "um", "only", "just", "me"].includes(cleaned)) continue;
+      if (
+        !cleaned ||
+        ["uh", "um", "only", "just", "me"].includes(cleaned)
+      )
+        continue;
       out.push(cleaned);
     }
   }
@@ -146,7 +141,9 @@ function extractParticipantsFromText(text: string): string[] {
   return Array.from(new Set(out)).filter(Boolean);
 }
 
-function parseClockTime(text: string): { hour: number; minute: number } | null {
+function parseClockTime(
+  text: string,
+): { hour: number; minute: number } | null {
   const numeric = text.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i);
   if (numeric) {
     let hour = Number(numeric[1]);
@@ -154,11 +151,12 @@ function parseClockTime(text: string): { hour: number; minute: number } | null {
     const ap = numeric[3].toLowerCase();
     if (ap === "pm" && hour < 12) hour += 12;
     if (ap === "am" && hour === 12) hour = 0;
-    if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) return { hour, minute };
+    if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59)
+      return { hour, minute };
   }
 
   const words = text.match(
-    /\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s*(thirty|fifteen|forty[- ]five|twenty|forty|five)?\s*(am|pm)\b/i
+    /\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s*(thirty|fifteen|forty[- ]five|twenty|forty|five)?\s*(am|pm)\b/i,
   );
   if (!words) return null;
   const hourMap: Record<string, number> = {
@@ -166,13 +164,8 @@ function parseClockTime(text: string): { hour: number; minute: number } | null {
     seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
   };
   const minuteMap: Record<string, number> = {
-    thirty: 30,
-    fifteen: 15,
-    "forty-five": 45,
-    "forty five": 45,
-    twenty: 20,
-    forty: 40,
-    five: 5,
+    thirty: 30, fifteen: 15, "forty-five": 45, "forty five": 45,
+    twenty: 20, forty: 40, five: 5,
   };
   let hour = hourMap[words[1].toLowerCase()] ?? 0;
   const minuteKey = String(words[2] ?? "").toLowerCase();
@@ -229,59 +222,34 @@ function extractPriority(texts: string[]): number | undefined {
   return undefined;
 }
 
-// ── JSON extraction ──────────────────────────────────────────────────
-
-function extractJson(raw: string): unknown | null {
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    // try other formats
-  }
-
-  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fenced?.[1]) {
-    try {
-      return JSON.parse(fenced[1].trim());
-    } catch {
-      // fall through
-    }
-  }
-
-  const objectMatch = trimmed.match(/\{[\s\S]*\}/);
-  if (objectMatch?.[0]) {
-    try {
-      return JSON.parse(objectMatch[0]);
-    } catch {
-      return null;
-    }
-  }
-
-  return null;
-}
-
-// ── Main orchestrator entry point ────────────────────────────────────
+// ── Main entry point ─────────────────────────────────────────────────
 
 export async function analyzeIntent(
   message: string,
   conversationHistory: { role: string; content: string }[],
-  context?: { userId?: string; teamId?: string; orgRoster?: string }
+  context?: { userId?: string; teamId?: string; orgRoster?: string },
 ): Promise<HermesDecision> {
   const userId = context?.userId ?? "user-1";
   const teamId = context?.teamId ?? "team-1";
+
   const recentUserTexts = conversationHistory
     .filter((t) => t.role === "user")
     .slice(-6)
     .map((t) => t.content);
   const allUserTexts = [...recentUserTexts, message];
+
+  // ── 1. Scheduling ──────────────────────────────────────────────────
+  const isOrgTeamQuery = /\b(who(?:'s| is) (?:on |in )?(?:my|our) (?:team|org)|(?:my|our) (?:team|org)|team members|org members|teammates)\b/i.test(message);
   const activeScheduleFlow = detectActiveScheduleFlow(conversationHistory);
-  const scheduleNow = activeScheduleFlow || isSchedulingIntent(message) || (isLikelyYesNoReply(message) && detectActiveScheduleFlow(conversationHistory));
+  const scheduleNow =
+    !isOrgTeamQuery &&
+    (activeScheduleFlow ||
+    isSchedulingIntent(message) ||
+    (isLikelyYesNoReply(message) && activeScheduleFlow));
 
   if (scheduleNow) {
     const participants = Array.from(
-      new Set(allUserTexts.flatMap((t) => extractParticipantsFromText(t)))
+      new Set(allUserTexts.flatMap((t) => extractParticipantsFromText(t))),
     );
     const preferredTime = extractPreferredTimeIso(allUserTexts);
     const durationMins = extractDurationMins(allUserTexts) ?? 30;
@@ -310,108 +278,144 @@ export async function analyzeIntent(
         participants: participants.map((p) =>
           p.includes("@")
             ? { userId: p.split("@")[0], email: p, priority: meetingPriority }
-            : { userId: p, priority: meetingPriority }
+            : { userId: p, priority: meetingPriority },
         ),
         title,
         preferredTime,
         meetingPriority,
         durationMins,
       },
-      extracted: { participants, preferredTime, durationMins, meetingPriority, title },
+      extracted: {
+        participants, preferredTime, durationMins, meetingPriority, title,
+      },
       gatheringFor: "neo-sched",
       confidence: 0.9,
     };
   }
 
-  const messages: { role: "system" | "user" | "assistant"; content: string }[] = [
-    { role: "system", content: HERMES_SYSTEM },
-  ];
-
-  // Include recent conversation so Hermes sees gathered info
-  const recent = conversationHistory.slice(-12);
-  for (const turn of recent) {
-    const role = turn.role === "system" ? "system" : turn.role === "assistant" ? "assistant" : "user";
-    messages.push({ role, content: turn.content });
+  // ── 2. PR triage ───────────────────────────────────────────────────
+  if (isPrIntent(message)) {
+    return {
+      action: "delegate",
+      agent: "neo-pr",
+      endpoint: "pr",
+      agentAction: "scan",
+      payload: { teamId },
+      confidence: 0.9,
+    };
   }
 
-  // Inject user/team context
-  messages.push({
-    role: "system",
-    content: `Current user: ${userId}, team: ${teamId}. Replace USER_ID in payloads with "${userId}" and TEAM_ID with "${teamId}".`,
-  });
-  if (activeScheduleFlow) {
-    messages.push({
-      role: "system",
-      content:
-        "Active scheduling flow detected from prior turns. Continue scheduling intent (ask/delegate), do not switch to general chat.",
-    });
-    if (isLikelyYesNoReply(message)) {
-      messages.push({
-        role: "system",
-        content: "The latest user message is a yes/no answer to your most recent scheduling question.",
-      });
-    }
+  // ── 3. Sprint ──────────────────────────────────────────────────────
+  if (isSprintIntent(message)) {
+    return {
+      action: "delegate",
+      agent: "neo-sprint",
+      endpoint: "sprint",
+      agentAction: "forecast",
+      payload: { teamId },
+      confidence: 0.9,
+    };
   }
 
-  if (context?.orgRoster?.trim()) {
-    messages.push({
-      role: "system",
-      content:
-        `Org roster for name resolution (prefer exact matches by name/email/userId):\n${context.orgRoster}`,
-    });
+  // ── 4. Brief ───────────────────────────────────────────────────────
+  if (isBriefIntent(message)) {
+    return {
+      action: "delegate",
+      agent: "neo-brief",
+      endpoint: "brief",
+      payload: { userId, type: "morning" },
+      confidence: 0.9,
+    };
   }
 
-  messages.push({
-    role: "user",
-    content: message,
-  });
+  // ── 5. Calendar check ──────────────────────────────────────────────
+  if (isCalendarCheckIntent(message)) {
+    const hasTomorrow = /\btomorrow\b/i.test(message);
+    const day = hasTomorrow ? "tomorrow" : "today";
+    return {
+      action: "delegate",
+      agent: "neo-sched",
+      endpoint: "schedule",
+      agentAction: "calendar",
+      payload: { userId, day },
+      confidence: 0.9,
+    };
+  }
 
-  try {
-    const raw = await lavaChat("neo-hermes", messages, {
-      temperature: 0.12,
-      max_tokens: 500,
-    });
+  // ── 6a. Send mail ──────────────────────────────────────────────────
+  if (isSendMailIntent(message)) {
+    const emailMatch = message.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i);
+    const toEmail = emailMatch?.[0];
 
-    const parsed = extractJson(raw);
-    if (!parsed || typeof parsed !== "object") {
-      return { action: "chat", confidence: 0.3 };
+    const aboutMatch = message.match(/\b(?:about|regarding|saying|that|with subject)\s+["']?(.+?)["']?\s*$/i);
+    const subject = aboutMatch?.[1]?.slice(0, 120);
+
+    // Resolve recipient from org roster if mentioned by name
+    const withMatch = message.match(/\b(?:to|email)\s+([a-z][a-z0-9._-]*)/i);
+    const recipientToken = toEmail ? undefined : withMatch?.[1]?.toLowerCase();
+
+    if (!toEmail && !recipientToken) {
+      return {
+        action: "ask",
+        question: "Who do you want me to email? You can give me a name from your org or an email address.",
+        gatheringFor: "neo-mail-send",
+        extracted: { subject },
+        confidence: 0.85,
+      };
     }
 
-    const d = parsed as Record<string, unknown>;
-
-    const action = d.action as string;
-    if (action !== "ask" && action !== "delegate" && action !== "chat") {
-      return { action: "chat", confidence: 0.3 };
-    }
-
-    // For delegate actions, inject userId/teamId into payload
-    let payload = d.payload as Record<string, unknown> | undefined;
-    if (action === "delegate" && payload) {
-      if (payload.requesterUserId === "USER_ID") payload.requesterUserId = userId;
-      if (payload.teamId === "TEAM_ID") payload.teamId = teamId;
-      if (!payload.requesterUserId) payload.requesterUserId = userId;
-      if (!payload.teamId) payload.teamId = teamId;
-      if (d.agent === "neo-sched") {
-        if (!payload.durationMins) payload.durationMins = 30;
-        if (!payload.meetingPriority) payload.meetingPriority = 3;
-        if (!payload.title || typeof payload.title !== "string" || !payload.title.trim()) {
-          payload.title = "Quick sync";
-        }
-      }
+    if (!subject) {
+      return {
+        action: "ask",
+        question: `What should the email to ${toEmail || recipientToken} be about?`,
+        gatheringFor: "neo-mail-send",
+        extracted: { toEmail, recipientToken },
+        confidence: 0.85,
+      };
     }
 
     return {
-      action,
-      question: typeof d.question === "string" ? d.question : undefined,
-      agent: typeof d.agent === "string" ? d.agent : undefined,
-      endpoint: typeof d.endpoint === "string" ? d.endpoint : undefined,
-      agentAction: typeof d.agentAction === "string" ? d.agentAction : undefined,
-      payload,
-      extracted: d.extracted as Record<string, unknown> | undefined,
-      gatheringFor: typeof d.gatheringFor === "string" ? d.gatheringFor : undefined,
-      confidence: typeof d.confidence === "number" ? d.confidence : 0.5,
+      action: "delegate",
+      agent: "neo-mail",
+      endpoint: "mail",
+      agentAction: "send",
+      payload: {
+        userId,
+        toEmail,
+        recipientToken,
+        subject,
+        body: subject,
+        orgRoster: context?.orgRoster,
+      },
+      confidence: 0.9,
     };
-  } catch {
-    return { action: "chat", confidence: 0 };
   }
+
+  // ── 5b. Mail summary ──────────────────────────────────────────────
+  if (isMailIntent(message)) {
+    return {
+      action: "delegate",
+      agent: "neo-mail",
+      endpoint: "mail",
+      agentAction: "summarize",
+      payload: { userId },
+      confidence: 0.9,
+    };
+  }
+
+  // ── 6. Root cause ──────────────────────────────────────────────────
+  if (isRootCauseIntent(message)) {
+    const prId = message.match(/\b(pr-?\d+)\b/i)?.[1];
+    const ticketId = message.match(/\b(tk-?\d+|ticket-?\d+)\b/i)?.[1];
+    return {
+      action: "delegate",
+      agent: "neo-root",
+      endpoint: "rootcause",
+      payload: { prId, ticketId, teamId },
+      confidence: 0.85,
+    };
+  }
+
+  // ── 7. Everything else → general chat ──────────────────────────────
+  return { action: "chat", confidence: 1.0 };
 }

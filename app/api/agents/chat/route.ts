@@ -65,7 +65,7 @@ function toSpokenStyle(text: string): string {
 }
 
 const TEAM_OVERVIEW_INTENT =
-  /\b(tell me about (?:my|our) team(?:mates)?|who(?:'s| is) (?:on )?(?:my|our) team(?:mates)?|team members|teammates|my team|our team|my teammates|our teammates)\b/i;
+  /\b(tell me about (?:my|our) (?:team(?:mates)?|org(?:anization)?)|who(?:'s| is) (?:on |in )?(?:my|our) (?:team(?:mates)?|org(?:anization)?)|team members|teammates|org members|my team|our team|my org|our org|my teammates|our teammates|who(?:'s| is) in (?:the )?org)\b/i;
 
 interface ParsedRosterMember {
   name?: string;
@@ -213,13 +213,13 @@ async function getLiveContext(userId: string, teamId: string): Promise<string> {
 
     const prs = sqlite
       .prepare(
-        `SELECT pr_id AS prId, title, author, checks, approvals, required_approvals AS requiredApprovals
+        `SELECT pr_id AS prId, title, author, assignee, checks, approvals, required_approvals AS requiredApprovals
          FROM prs WHERE team_id = ? AND state = 'open' ORDER BY updated_at DESC LIMIT 10`
       )
       .all(teamId) as Array<Record<string, unknown>>;
     const tickets = sqlite
       .prepare(
-        `SELECT ticket_id AS ticketId, title, priority, status, blocked_by_json AS blockedBy
+        `SELECT ticket_id AS ticketId, title, priority, status, assignee, blocked_by_json AS blockedBy
          FROM tickets WHERE team_id = ? ORDER BY updated_at DESC LIMIT 10`
       )
       .all(teamId) as Array<Record<string, unknown>>;
@@ -231,7 +231,7 @@ async function getLiveContext(userId: string, teamId: string): Promise<string> {
           prs
             .map(
               (p) =>
-                `${p.prId} "${p.title}" by ${p.author ?? "unknown"} (${p.checks ?? "unknown"}, ${p.approvals ?? 0}/${p.requiredApprovals ?? 1} approvals)`
+                `${p.prId} "${p.title}" by ${p.author ?? "unknown"} assigned:${p.assignee ?? "unassigned"} (${p.checks ?? "unknown"}, ${p.approvals ?? 0}/${p.requiredApprovals ?? 1} approvals)`
             )
             .join("; ")
       );
@@ -245,7 +245,7 @@ async function getLiveContext(userId: string, teamId: string): Promise<string> {
               try {
                 blockedBy = JSON.parse(String(t.blockedBy ?? "[]"));
               } catch {}
-              return `${t.ticketId} "${t.title}" P${t.priority ?? 3} [${t.status ?? "Open"}]${blockedBy.length ? ` blocked by ${blockedBy.join(",")}` : ""}`;
+              return `${t.ticketId} "${t.title}" P${t.priority ?? 3} [${t.status ?? "Open"}] assigned:${t.assignee ?? "unassigned"}${blockedBy.length ? ` blocked by ${blockedBy.join(",")}` : ""}`;
             })
             .join("; ")
       );
@@ -269,7 +269,7 @@ async function getLiveContext(userId: string, teamId: string): Promise<string> {
           prs
             .map(
               (p) =>
-                `${p.prId} "${p.title}" by ${p.author} (${p.checks}, ${p.approvals}/${p.requiredApprovals} approvals)`
+                `${p.prId} "${p.title}" by ${p.author} assigned:${p.assignee ?? "unassigned"} (${p.checks}, ${p.approvals}/${p.requiredApprovals} approvals)`
             )
             .join("; ")
       );
@@ -280,7 +280,7 @@ async function getLiveContext(userId: string, teamId: string): Promise<string> {
           tickets
             .map(
               (t) =>
-                `${t.ticketId} "${t.title}" P${t.priority} [${t.status}]${t.blockedBy?.length ? ` blocked by ${t.blockedBy.join(",")}` : ""}`
+                `${t.ticketId} "${t.title}" P${t.priority} [${t.status}] assigned:${t.assignee ?? "unassigned"}${t.blockedBy?.length ? ` blocked by ${t.blockedBy.join(",")}` : ""}`
             )
             .join("; ")
       );
@@ -294,11 +294,15 @@ async function getLiveContext(userId: string, teamId: string): Promise<string> {
       );
     }
 
+    // Supplement from SQL tables if docs-based query missed PRs or tickets
+    if (prs.length === 0 || tickets.length === 0) {
+      const sqliteCtx = await buildSqliteContext().catch(() => "");
+      if (sqliteCtx) parts.push(sqliteCtx);
+    }
+
     if (parts.length > 0) return parts.join("\n");
 
-    // MongoDB connected but empty — try SQLite
-    const sqliteCtx = await buildSqliteContext().catch(() => "");
-    return sqliteCtx || "No live data available.";
+    return "No live data available.";
   } catch {
     try {
       const sqliteCtx = await buildSqliteContext();
@@ -348,6 +352,7 @@ async function pickBestRequesterUserId(input: {
   sessionEmail?: string;
   bodyUserId?: string;
 }): Promise<string> {
+  const masterUserId = process.env.MASTER_USER_ID?.trim() || "user-1";
   const sessionRaw = input.sessionUserId?.trim();
   const bodyRaw = input.bodyUserId?.trim();
 
@@ -373,7 +378,13 @@ async function pickBestRequesterUserId(input: {
     if (bodyOrg && sessionOrg && bodyResolved !== "user-1") return bodyResolved;
   }
 
-  return sessionResolved || bodyResolved || "user-1";
+  const picked = sessionResolved || bodyResolved || masterUserId;
+
+  // If the resolved user doesn't belong to any org, fall back to master user
+  const org = await getOrgContextForIdentity({ userId: picked, email: input.sessionEmail }).catch(() => null);
+  if (!org && process.env.ENABLE_MASTER_FALLBACK === "true") return masterUserId;
+
+  return picked;
 }
 
 // ── Post-delegation: start email negotiation if scheduling ───────────
@@ -545,11 +556,14 @@ export async function POST(req: NextRequest) {
   }
 
   // 3. Ask Hermes what to do
+  // Only pass actual session turns to Hermes (exclude recalled-memory system turns)
+  // so past-session context doesn't pollute intent detection
+  const sessionTurnsOnly = conversationHistory.filter((t) => t.role !== "system");
   const combinedOrgContext = [orgRosterContext, teamGraphContext].filter(Boolean).join("\n\n");
   let decision: HermesDecision;
   try {
     decision = await withTimeout(
-      analyzeIntent(message, conversationHistory, {
+      analyzeIntent(message, sessionTurnsOnly, {
         userId,
         teamId,
         orgRoster: combinedOrgContext || undefined,

@@ -10,6 +10,7 @@ import {
 } from "@/lib/org";
 import { getTokenForUser } from "@/lib/auth0";
 import { getDb, COLLECTIONS } from "@/lib/mongodb";
+import { createEvent as nylasCreateEvent, getEvents as nylasGetEvents } from "@/lib/nylas";
 
 interface CalendarEvent {
   eventId: string;
@@ -563,38 +564,22 @@ async function createCalendarInvite(
   emails: string[],
   threadText?: string,
   threadId?: string,
-  ownerUserId?: string
+  _ownerUserId?: string
 ): Promise<void> {
-  const userToken = ownerUserId ? await getTokenForUser(ownerUserId, "calendar") : null;
-  const nylasToken = userToken || process.env.NYLAS_API_KEY;
-  if (!nylasToken) return;
+  const description = [
+    threadId ? `Neo thread: ${threadId}` : "",
+    threadText ? `Thread context: ${threadText}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 
-  try {
-    await fetch("https://api.nylas.com/events", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${nylasToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        calendar_id: "primary",
-        title,
-        description: [
-          threadId ? `Neo thread: ${threadId}` : "",
-          threadText ? `Thread context: ${threadText}` : "",
-        ]
-          .filter(Boolean)
-          .join("\n"),
-        when: {
-          start_time: Math.floor(new Date(slot.start).getTime() / 1000),
-          end_time: Math.floor(new Date(slot.end).getTime() / 1000),
-        },
-        participants: emails.map((email) => ({ email })),
-      }),
-    });
-  } catch {
-    // Best-effort external sync.
-  }
+  await nylasCreateEvent({
+    title,
+    startTime: new Date(slot.start),
+    endTime: new Date(slot.end),
+    participants: emails,
+    description,
+  }).catch(() => {});
 }
 
 // ── POST handler ──────────────────────────────────────────────────────────────
@@ -610,6 +595,7 @@ export async function POST(req: Request) {
   if (action === "reschedule") return handleReschedule(req);
   if (action === "reconcile") return handleReconcile(req);
   if (action === "orchestrate") return handleOrchestrate(req);
+  if (action === "calendar") return handleCalendarCheck(req);
 
   if (path.endsWith("/find")) return handleFind(req);
   if (path.endsWith("/book")) return handleBook(req);
@@ -1049,6 +1035,64 @@ async function handleReconcile(req: Request) {
     reconciled: true,
     oldEventId: event.eventId,
     ...bookedJson,
+  });
+}
+
+// ── Calendar check (read live events from Nylas) ──────────────────────────────
+
+async function handleCalendarCheck(req: Request) {
+  let body: { userId?: string; day?: string };
+  try {
+    body = await req.json();
+  } catch {
+    return Response.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const now = new Date();
+  const isTomorrow = body.day === "tomorrow";
+  const target = isTomorrow ? new Date(now.getTime() + 86400000) : now;
+
+  const dayStart = new Date(target);
+  dayStart.setHours(0, 0, 0, 0);
+  const dayEnd = new Date(target);
+  dayEnd.setHours(23, 59, 59, 999);
+
+  const result = await nylasGetEvents(dayStart, dayEnd);
+
+  if (!result.ok) {
+    return Response.json({
+      error: "Could not read calendar",
+      details: result.error,
+      degraded: true,
+    }, { status: 502 });
+  }
+
+  const events = result.events.map((e) => ({
+    id: e.id,
+    title: e.title ?? "Untitled",
+    start: new Date(e.startTime * 1000).toISOString(),
+    end: new Date(e.endTime * 1000).toISOString(),
+    startFormatted: new Date(e.startTime * 1000).toLocaleString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    }),
+    endFormatted: new Date(e.endTime * 1000).toLocaleString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    }),
+    participants: e.participants,
+  }));
+
+  const dayLabel = isTomorrow ? "tomorrow" : "today";
+
+  return Response.json({
+    day: dayLabel,
+    date: dayStart.toISOString().split("T")[0],
+    eventCount: events.length,
+    events,
+    calendarSource: "nylas",
   });
 }
 

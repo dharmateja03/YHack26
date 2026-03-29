@@ -8,6 +8,7 @@
  */
 
 import { getDb, COLLECTIONS } from "./mongodb";
+import { sendEmail as nylasSendEmail } from "./nylas";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -280,10 +281,6 @@ export function analyzeReply(text: string): {
  * to coordinate directly.
  */
 export async function sendMaxRoundsEmail(neg: NegotiationDoc): Promise<boolean> {
-  const nylasKey = process.env.NYLAS_API_KEY;
-  if (!nylasKey) return false;
-
-  const senderEmail = process.env.NEO_AGENT_EMAIL ?? "neo-agent@neosis.ai";
   const body = [
     `Hi ${neg.participantName},`,
     "",
@@ -294,33 +291,17 @@ export async function sendMaxRoundsEmail(neg: NegotiationDoc): Promise<boolean> 
     "— Neo (AI Assistant)",
   ].join("\n");
 
-  try {
-    const res = await fetch("https://api.nylas.com/send", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${nylasKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        subject: `Action needed: please schedule "${neg.title}" directly`,
-        to: [{ email: neg.participantEmail, name: neg.participantName }],
-        from: [{ email: senderEmail, name: "Neo Assistant" }],
-        body,
-        metadata: { negotiationId: neg.negotiationId, threadId: neg.threadId },
-      }),
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
+  const result = await nylasSendEmail({
+    to: [{ email: neg.participantEmail, name: neg.participantName }],
+    subject: `Action needed: please schedule "${neg.title}" directly`,
+    body,
+  });
+  return result.ok;
 }
 
 // ── Email sending (best-effort via Nylas) ────────────────────────────
 
 export async function sendProposalEmail(neg: NegotiationDoc): Promise<boolean> {
-  const nylasKey = process.env.NYLAS_API_KEY;
-  if (!nylasKey) return false;
-
   const senderEmail = process.env.NEO_AGENT_EMAIL ?? "neo-agent@neosis.ai";
   const slotStart = neg.proposedSlot
     ? new Date(neg.proposedSlot.start).toLocaleString("en-US", {
@@ -357,40 +338,19 @@ export async function sendProposalEmail(neg: NegotiationDoc): Promise<boolean> {
     .filter(Boolean)
     .join("\n");
 
-  try {
-    const res = await fetch("https://api.nylas.com/send", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${nylasKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        subject: `Meeting Proposal: ${neg.title}`,
-        to: [{ email: neg.participantEmail, name: neg.participantName }],
-        from: [{ email: senderEmail, name: "Neo Assistant" }],
-        body,
-        reply_to: [{ email: senderEmail, name: "Neo Assistant" }],
-        metadata: {
-          negotiationId: neg.negotiationId,
-          threadId: neg.threadId,
-        },
-      }),
-    });
-
-    return res.ok;
-  } catch {
-    return false;
-  }
+  const result = await nylasSendEmail({
+    to: [{ email: neg.participantEmail, name: neg.participantName }],
+    subject: `Meeting Proposal: ${neg.title}`,
+    body,
+    replyTo: [{ email: senderEmail, name: "Neo Assistant" }],
+  });
+  return result.ok;
 }
 
 export async function sendCounterEmail(
   neg: NegotiationDoc,
   newSlot: { start: string; end: string }
 ): Promise<boolean> {
-  const nylasKey = process.env.NYLAS_API_KEY;
-  if (!nylasKey) return false;
-
-  const senderEmail = process.env.NEO_AGENT_EMAIL ?? "neo-agent@neosis.ai";
   const slotStr = new Date(newSlot.start).toLocaleString("en-US", {
     weekday: "short",
     month: "short",
@@ -409,27 +369,10 @@ export async function sendCounterEmail(
     "— Neo (AI Assistant)",
   ].join("\n");
 
-  try {
-    const res = await fetch("https://api.nylas.com/send", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${nylasKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        subject: `Re: Meeting Proposal: ${neg.title}`,
-        to: [{ email: neg.participantEmail, name: neg.participantName }],
-        from: [{ email: senderEmail, name: "Neo Assistant" }],
-        body,
-        metadata: {
-          negotiationId: neg.negotiationId,
-          threadId: neg.threadId,
-        },
-      }),
-    });
-
-    return res.ok;
-  } catch {
-    return false;
-  }
+  const result = await nylasSendEmail({
+    to: [{ email: neg.participantEmail, name: neg.participantName }],
+    subject: `Re: Meeting Proposal: ${neg.title}`,
+    body,
+  });
+  return result.ok;
 }

@@ -1,260 +1,116 @@
 # Neosis
 
-**AI Executive Assistant for Engineering Teams**
+**The Affordable AI Executive Assistant for Engineering Teams**
 
-Neosis is a voice-first, multi-agent system that helps engineering teams manage their daily workflow — PRs, tickets, sprints, scheduling, and root cause analysis — through natural conversation with **Neo**, an AI assistant that remembers context across sessions.
+Neosis is a voice-first, multi-agent system that helps engineering teams manage their daily workflow — PRs, tickets, sprints, scheduling, and briefings — through natural conversation with **Neo**, an AI assistant that remembers context across sessions.
 
 Built at YHack 2026 by Dharma, Keshav, Veda, and Sai.
+
+---
+
+## What Neo Can Do
+
+| Capability | Example prompts |
+|-----------|-----------------|
+| **Morning briefing** | "Give me my morning briefing" |
+| **PR triage** | "Show me the open PRs", "Which PRs are ready to merge?" |
+| **Sprint status** | "How's the current sprint looking?" |
+| **Meeting scheduling** | "Schedule a sync with Keshav tomorrow at 10am" |
+| **Team assignments** | "What is Sai working on?", "What tickets are assigned to me?" |
+| **Blocker analysis** | "Are there any blockers right now?", "What's blocking tk-002?" |
+| **Email summary** | "Summarize my inbox" |
+| **General chat** | "Hello", "Who has capacity this week?" |
+
+All prompts work via text or voice (ElevenLabs Conversational AI).
 
 ---
 
 ## Architecture
 
 ```
-Browser (voice/text)
+Browser (voice / text)
     │
     ▼
-┌─────────────────────────────────────────────┐
-│  Next.js 14 (App Router)                    │
-│                                             │
-│  /api/agents/chat  ← main conversational    │
-│      │               endpoint               │
-│      ├── intent detection                   │
-│      ├── memory recall (short + long term)  │
-│      ├── sub-agent delegation               │
-│      └── streaming response                 │
-│                                             │
-│  Sub-agents:                                │
-│  /api/agents/brief    → daily briefings     │
-│  /api/agents/pr       → PR triage & review  │
-│  /api/agents/schedule → meeting booking     │
-│  /api/agents/rootcause→ blocker diagnosis   │
-│  /api/agents/sprint   → forecast & retro    │
-└──────┬──────────┬──────────┬────────────────┘
+┌───────────────────────────────────────────────┐
+│  Next.js 14 (App Router)                      │
+│                                               │
+│  /api/agents/chat  ← main endpoint            │
+│      │                                        │
+│      ├── deterministic intent router           │
+│      │   (regex-based, zero-latency)           │
+│      ├── memory recall (short + long term)     │
+│      ├── live context (PRs, tickets, sprint)   │
+│      ├── sub-agent delegation                  │
+│      └── LLM response generation               │
+│                                               │
+│  Sub-agents:                                  │
+│  /api/agents/brief    → daily briefings       │
+│  /api/agents/pr       → PR triage & review    │
+│  /api/agents/schedule → meeting booking       │
+│  /api/agents/sprint   → forecast & velocity   │
+│  /api/agents/mail     → email summary         │
+└──────┬──────────┬──────────┬──────────────────┘
        │          │          │
        ▼          ▼          ▼
-   Lava.so    MongoDB    ElevenLabs
-   (LLM)    Atlas+Vector   (TTS)
-              Search
+   Lava.so     SQLite     Nylas      ElevenLabs
+   (LLM)     (storage)  (calendar)    (voice)
 ```
 
-## How Conversation Works
+## How It Works
+
+### Intent Routing (Hermes)
+
+Neo uses a **deterministic rule-based intent router** — no LLM in the routing loop. Simple regex patterns match user messages to the right sub-agent:
+
+- `schedule`, `book`, `meeting with` → **neo-sched** (meeting scheduling via Nylas)
+- `pr`, `pull request`, `code review` → **neo-pr** (PR triage)
+- `sprint`, `velocity`, `forecast` → **neo-sprint** (sprint forecasting)
+- `briefing`, `catch me up` → **neo-brief** (daily briefings)
+- `email`, `inbox` → **neo-mail** (email summary)
+- Everything else → **neo-chat** (general conversation with full live context)
+
+This is fast, predictable, and avoids the hallucination issues of LLM-based classification.
+
+### Conversation Memory
 
 Unlike typical one-shot AI chat, Neosis maintains **multi-turn conversational memory**:
 
-### 1. Short-term memory (current session)
-Every user message and Neo response is saved as a "turn" with a session ID. When you send a new message, the last 8 turns are loaded so Neo knows what you just discussed.
+1. **Short-term** — Last 8 turns from the current session
+2. **Long-term** — Voyage AI embeddings + vector search across all past sessions. If you discussed PR-42 last week and ask "what happened with that stuck PR?" today, Neo finds it.
+3. **Graceful degradation** — No Voyage API? Keyword search. No vector DB? In-memory store.
 
-### 2. Long-term memory (cross-session recall)
-Each turn is embedded into a **1536-dimensional vector** using Voyage AI (`voyage-code-2`). When you ask something new:
-- Your query is embedded into the same vector space
-- **MongoDB Atlas Vector Search** finds semantically similar turns from ALL your past sessions
-- Matches above 0.65 cosine similarity are injected as context
+### Live Context
 
-So if you discussed PR-42 last week and ask "what happened with that stuck PR?" today, Neo finds the relevant context — even without exact keyword matches.
+Every message gets enriched with real-time team data from SQLite:
+- Open PRs with author, assignee, check status, approval counts
+- Tickets with priority, status, assignee, blockers
+- Sprint progress with velocity and story completion
+- Org roster with team member details
 
-### 3. Graceful degradation
-- No Voyage API? → Falls back to keyword-based text search
-- No MongoDB? → In-memory Map stores turns for the current server session
-- No LLM? → Returns raw sub-agent data as fallback
+### Meeting Scheduling (Nylas)
 
-### Flow per message:
-```
-User sends message
-  → save turn to memory (with vector embedding)
-  → build context: recent turns + recalled past memory
-  → pull live data (PRs, tickets, sprint) from MongoDB
-  → detect intent → delegate to sub-agent if needed
-  → combine everything into LLM prompt
-  → generate response via Lava.so gateway
-  → save assistant turn to memory
-  → stream response word-by-word to browser
-```
+The schedule agent books real calendar invites:
+1. Deterministic router detects scheduling intent and extracts participants, time, duration
+2. Participant names are resolved against the org roster
+3. Calendar availability is checked via Nylas API
+4. Meeting is booked and invites sent to all participants' emails
 
-## Voice: How Neo Talks Like a Human
+### Voice
 
-### ElevenLabs Text-to-Speech
-
-Neo uses **ElevenLabs Turbo v2** for near-real-time voice synthesis:
+Neo uses **ElevenLabs Conversational AI** for full-duplex, real-time voice:
 
 ```
-lib/elevenlabs.ts → streamSpeech(text)
-  → POST /v1/text-to-speech/{voiceId}/stream
-  → returns ReadableStream<Uint8Array> (audio/mpeg)
-  → streamed directly to browser — no buffering
+User clicks mic → browser requests permission
+  → signed WebSocket URL from server
+  → bidirectional audio stream:
+     User speaks → STT → agent processes → TTS → user hears Neo
 ```
 
-**Key settings for natural speech:**
-| Parameter | Value | Why |
-|-----------|-------|-----|
-| `model_id` | `eleven_turbo_v2` | Optimized for low latency (~300ms to first word) |
-| `stability` | `0.5` | Balanced — not robotic, not too variable |
-| `similarity_boost` | `0.75` | Keeps the voice consistent across responses |
-| `style` | `0.0` | Neutral delivery, lets content drive tone |
-| `use_speaker_boost` | `true` | Clearer audio, better for speech |
-| `optimize_streaming_latency` | `3` | Maximum latency optimization (1-4 scale) |
-
-**Voice selection:**
-- Default voice ID: `21m00Tcm4TlvDq8ikWAM` (Rachel — clear, professional)
-- Override with `ELEVENLABS_VOICE_ID` env var
-- ElevenLabs has 100+ voices — pick one that matches your team's vibe
-
-**How audio reaches the browser:**
-1. Chat endpoint generates text response
-2. If client sends `Accept: audio/mpeg` header, response goes through ElevenLabs
-3. Raw audio stream is piped directly to the browser (no server-side buffering)
-4. Browser plays via `<audio>` element with waveform visualization
-5. Text reply is sent in `X-Neo-Reply` response header as fallback
-
-### Browser Speech (Fallback TTS)
-When ElevenLabs is unavailable, Neo falls back to the **Web Speech API** (`window.speechSynthesis`) — free, instant, works offline, but sounds robotic.
-
-### Real-time Duplex Voice — ElevenLabs Conversational AI
-
-This is what makes Neo feel like you're *talking to a person*, not waiting for text responses.
-
-**Agent ID:** `agent_2101kmw3enfdfh1bpyyrynh831x2`
-
-Neo uses the ElevenLabs Conversational AI Agent platform for full-duplex, real-time voice:
-
-```
-User clicks orb / mic button
-  → browser requests mic permission
-  → GET /api/elevenlabs/signed-url
-      → server calls ElevenLabs signed URL API (authenticated)
-      → returns signed WebSocket URL
-  → @elevenlabs/react opens WebSocket/WebRTC connection
-  → bidirectional audio stream begins:
-      User speaks → ElevenLabs STT → agent processes → TTS → user hears Neo
-```
-
-**Why this is different from the TTS approach:**
-| | TTS (streamSpeech) | Conversational AI Agent |
-|---|---|---|
-| Latency | ~300ms first word, but you wait for full LLM response first | ~500ms end-to-end, true real-time |
-| Turn-taking | User must click mic, wait, get response | Natural interruption — speak anytime |
-| STT | Browser Web Speech API (Chrome only) | ElevenLabs built-in (all browsers) |
-| Voice quality | Good (streaming chunks) | Better (optimized for conversation) |
-| Context | Stateless per request | Maintains conversation state |
-
-**Connection flow (with fallbacks):**
-1. Try signed URL (server-authenticated, WebSocket) — most secure
-2. If API key lacks `convai_write` permission → fall back to `agentId` + WebRTC (public agent)
-3. If no server config → use `NEXT_PUBLIC_ELEVENLABS_AGENT_ID` directly from browser
-
-**Frontend integration (`app/page.tsx`):**
-```typescript
-import { ConversationProvider, useConversation } from "@elevenlabs/react";
-
-const conversation = useConversation({
-  onConnect: () => { /* agent card glows "running" */ },
-  onDisconnect: () => { /* reset agent cards */ },
-  onMessage: ({ role, message }) => {
-    // Real-time transcript updates — messages grow as the agent speaks
-    // UI merges partial transcripts into the same bubble
-  },
-  onError: (message) => { /* show error under orb */ },
-});
-
-// Start live session
-await conversation.startSession({ signedUrl: "wss://..." });
-
-// Or with public agent
-await conversation.startSession({
-  agentId: "agent_2101kmw3enfdfh1bpyyrynh831x2",
-  connectionType: "webrtc",
-});
-
-// Send text in a live session (no mic needed)
-conversation.sendUserMessage("check my PRs");
-
-// Inject context without triggering a response
-conversation.sendContextualUpdate("User just opened the sprint page");
-```
-
-**Key capabilities in live mode:**
-- `conversation.isSpeaking` — true when Neo is talking (shows waveform)
-- `conversation.isListening` — true when listening for user input
-- `conversation.sendUserMessage(text)` — type while in a live voice session
-- `conversation.endSession()` — click orb again to disconnect
-- Natural interruption — user can speak while Neo is responding, Neo stops and listens
-
-### Voice Input (Speech-to-Text)
-In live mode, microphone capture and turn-taking are handled by the ElevenLabs conversation session — not browser Web Speech Recognition. This works in **all browsers** (not just Chrome). Users can also type follow-up messages in the same live session via `sendUserMessage()`.
-
-### Voice Architecture Summary
-
-```
-┌─────────────────────────────────────────────────────┐
-│                   VOICE MODES                        │
-├───────────────┬──────────────────┬──────────────────┤
-│  Live Duplex  │  Streaming TTS   │  Browser Fallback│
-│  (primary)    │  (text chat)     │  (offline)       │
-├───────────────┼──────────────────┼──────────────────┤
-│ ElevenLabs    │ ElevenLabs       │ Web Speech API   │
-│ Conv. AI      │ eleven_turbo_v2  │ speechSynthesis  │
-│ WebRTC/WS     │ REST streaming   │ Native           │
-│ ~500ms e2e    │ ~300ms 1st word  │ Instant          │
-│ Full-duplex   │ Half-duplex      │ Half-duplex      │
-│ Built-in STT  │ Browser STT      │ Browser STT      │
-│ All browsers  │ All browsers     │ Chrome/Edge      │
-└───────────────┴──────────────────┴──────────────────┘
-
-Priority: Live Duplex → Streaming TTS → Browser Fallback
-```
-
-## Voyage AI: Semantic Memory
-
-Voyage AI powers the "remembering" layer:
-
-```
-lib/voyage.ts
-  → embed(text)      → single 1536-dim vector
-  → embedBatch(texts) → batch embedding
-  → model: voyage-code-2
-```
-
-**Why voyage-code-2?**
-- Optimized for code + technical text (perfect for engineering context)
-- 1536 dimensions — good balance of precision vs storage
-- Supports up to 16K tokens per input
-
-**MongoDB Atlas Vector Search index:**
-```json
-{
-  "name": "conversations_vector",
-  "type": "vectorSearch",
-  "definition": {
-    "fields": [
-      {
-        "type": "vector",
-        "path": "turns.embedding",
-        "numDimensions": 1536,
-        "similarity": "cosine"
-      },
-      {
-        "type": "filter",
-        "path": "userId"
-      }
-    ]
-  }
-}
-```
-
-## LLM Routing via Lava.so
-
-Lava.so is an OpenAI-compatible gateway that routes to different models per agent:
-
-| Agent | Model | Why |
-|-------|-------|-----|
-| `neo-brief` | `claude-haiku-4-5` | Fast, cheap — daily summaries |
-| `neo-pr` | `groq/llama-3.1-70b` | Fast inference for PR scanning |
-| `neo-sched` | `claude-sonnet-4-6` | Complex reasoning for scheduling |
-| `neo-root` | `claude-sonnet-4-6` | Deep analysis for root cause |
-| `neo-sprint` | `claude-sonnet-4-6` | Forecasting needs strong reasoning |
-| `neo-sprint-notes` | `groq/llama-3.1-70b` | Fast for release note generation |
-
-Each request includes `x-lava-agent-id` header for per-agent spend tracking on the Lava dashboard.
+| Mode | Tech | Latency | Experience |
+|------|------|---------|------------|
+| Live duplex (primary) | ElevenLabs Conv. AI | ~500ms e2e | Natural conversation, interruptions |
+| Streaming TTS | ElevenLabs Turbo v2 | ~300ms first word | Text-triggered speech |
+| Browser fallback | Web Speech API | Instant | Offline, robotic |
 
 ## Tech Stack
 
@@ -263,30 +119,37 @@ Each request includes `x-lava-agent-id` header for per-agent spend tracking on t
 | Framework | Next.js 14 (App Router) |
 | Styling | Tailwind CSS |
 | Auth | Auth0 |
-| Database | MongoDB Atlas |
-| Vector Search | MongoDB Atlas Vector Search |
-| Embeddings | Voyage AI (`voyage-code-2`) |
-| LLM Gateway | Lava.so (routes to Claude, Groq) |
+| Database | SQLite (dual: relational tables + JSON docs) |
+| Embeddings | Voyage AI (`voyage-code-2`, 1536-dim) |
+| LLM Gateway | Lava.so (routes to Claude, Groq, Llama) |
+| Calendar | Nylas API |
 | Voice (live) | ElevenLabs Conversational AI (WebRTC/WS) |
 | Voice (TTS) | ElevenLabs Turbo v2 (streaming) |
-| STT | ElevenLabs (live mode) / Web Speech API (fallback) |
+| STT | ElevenLabs (live) / Web Speech API (fallback) |
+
+### LLM Routing via Lava.so
+
+| Agent | Model | Why |
+|-------|-------|-----|
+| `neo-brief` | `claude-haiku-4-5` | Fast, cheap — daily summaries |
+| `neo-pr` | `groq/llama-3.1-70b` | Fast inference for PR scanning |
+| `neo-sched` | `claude-sonnet-4-6` | Complex reasoning for scheduling |
+| `neo-root` | `claude-sonnet-4-6` | Deep analysis for root cause |
+| `neo-sprint` | `claude-sonnet-4-6` | Forecasting needs strong reasoning |
+| `neo-chat` | default | General conversation |
 
 ## Environment Variables
 
 ```env
-# MongoDB
-MONGODB_URI=mongodb+srv://...
-MONGODB_DB=neosis
-
 # Lava.so (LLM gateway)
 LAVA_API_KEY=lava-...
 LAVA_BASE_URL=https://api.lava.so/v1
 
 # ElevenLabs (voice)
 ELEVENLABS_API_KEY=xi-...
-ELEVENLABS_VOICE_ID=21m00Tcm4TlvDq8ikWAM             # optional, defaults to Rachel
-ELEVENLABS_CONVAI_AGENT_ID=agent_2101kmw3enfdfh1bpyyrynh831x2   # Conversational AI agent
-NEXT_PUBLIC_ELEVENLABS_AGENT_ID=agent_2101kmw3enfdfh1bpyyrynh831x2  # browser fallback for WebRTC
+ELEVENLABS_VOICE_ID=...
+ELEVENLABS_CONVAI_AGENT_ID=...
+NEXT_PUBLIC_ELEVENLABS_AGENT_ID=...
 
 # Voyage AI (embeddings)
 VOYAGE_API_KEY=voyage-...
@@ -297,12 +160,20 @@ AUTH0_BASE_URL=http://localhost:3000
 AUTH0_ISSUER_BASE_URL=https://your-tenant.auth0.com
 AUTH0_CLIENT_ID=...
 AUTH0_CLIENT_SECRET=...
+
+# Nylas (calendar)
+NYLAS_API_KEY=...
+NYLAS_GRANT_ID=...
+
+# Master user (dev/demo mode)
+MASTER_USER_ID=ds3519
+ENABLE_MASTER_FALLBACK=true
 ```
 
 ## Getting Started
 
 ```bash
-# Install
+# Install dependencies
 npm install
 
 # Seed the database with sample data
@@ -311,60 +182,41 @@ npm run seed
 # Seed randomized demo PRs/issues/messages
 npm run seed:demo -- --prs 20 --tickets 12 --messages 30
 
-# Optional: also send demo updates to Slack channel
-npm run seed:demo -- --send-slack --channel C0123456789 --slack-count 5
-
 # Run dev server
 npm run dev
-
-# Run tests
-npm test
-
-# Run tests for a specific team member
-npm run test:dharma
-npm run test:keshav
-npm run test:veda
-npm run test:sai
 ```
 
-## Demo Slack API
+## Project Structure
 
-POST [`/api/demo/slack`](/Users/dharmatejasamudrala/projects/YHack26/app/api/demo/slack/route.ts) to push a message into Slack and mirror it into Mongo `messages` collection.
-
-Example body:
-
-```json
-{
-  "channel": "C0123456789",
-  "text": "Demo update: PR demo-pr-3 is blocked by DEMO-104"
-}
 ```
+app/
+  neo/page.tsx              → Chat UI (text + voice)
+  page.tsx                  → Landing page
+  api/agents/
+    chat/route.ts           → Main conversational endpoint
+    brief/route.ts          → Daily briefing agent
+    pr/route.ts             → PR triage agent
+    schedule/route.ts       → Meeting scheduling agent
+    sprint/route.ts         → Sprint forecasting agent
+    mail/route.ts           → Email summary agent
 
-## Making Neo Sound More Human
-
-Tips for tuning ElevenLabs voice quality:
-
-1. **Pick the right voice** — browse voices at [elevenlabs.io/voice-library](https://elevenlabs.io/voice-library). Clone a custom voice for a unique brand.
-
-2. **Tune stability** — lower values (0.2-0.4) add more expressiveness and variation. Higher (0.7-0.9) for consistent, professional delivery.
-
-3. **Write for speech, not text** — Neo's system prompt says "2-3 sentences max." Short, punchy responses sound better spoken than long paragraphs.
-
-4. **Add SSML-style hints** — ElevenLabs responds to punctuation:
-   - `...` adds a natural pause
-   - `—` (em dash) creates a slight break
-   - `!` adds emphasis
-   - Short sentences = more natural rhythm
-
-5. **Use streaming** — `optimize_streaming_latency: 3` gets first audio chunk in ~300ms. The user hears Neo start talking almost instantly.
-
-6. **Fallback gracefully** — if ElevenLabs is down or slow (>15s timeout), the brief endpoint falls back to JSON text. The chat endpoint falls back to browser `speechSynthesis`.
+lib/
+  hermes.ts                 → Deterministic intent router
+  lava.ts                   → LLM gateway (Lava.so)
+  memory.ts                 → Short/long-term conversation memory
+  sqlite.ts                 → SQLite database + schema
+  mongodb.ts                → MongoDB-like adapter over SQLite
+  org.ts                    → Org roster + member resolution
+  nylas.ts                  → Nylas calendar API
+  elevenlabs.ts             → ElevenLabs TTS streaming
+  voyage.ts                 → Voyage AI embeddings
+```
 
 ## Team
 
 | Member | Focus Areas |
 |--------|------------|
-| **Dharma** | PR agent, chat endpoint, memory system, architecture |
+| **Dharma** | Chat endpoint, intent routing, memory system, architecture |
 | **Keshav** | Sprint agent, ElevenLabs TTS, brief agent |
 | **Veda** | Root cause agent, Voyage embeddings, vector search |
-| **Sai** | Schedule agent, UI/frontend, connection cards |
+| **Sai** | Schedule agent, UI/frontend, Nylas integration |

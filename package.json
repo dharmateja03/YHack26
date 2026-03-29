@@ -20,7 +20,6 @@
     "test:sai": "jest __tests__/sai.test.ts"
   },
   "dependencies": {
-    "@auth0/nextjs-auth0": "^3.5.0",
     "@elevenlabs/react": "^1.0.0",
     "axios": "^1.6.0",
     "better-sqlite3": "^12.8.0",

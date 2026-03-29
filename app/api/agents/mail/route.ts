@@ -12,18 +12,24 @@ import {
   MAX_NEGOTIATION_ROUNDS,
 } from "@/lib/negotiate";
 import { resolveTeamAwareness } from "@/lib/agent-context";
+import { sendEmail as nylasSendEmail } from "@/lib/nylas";
 
 // ── Types ────────────────────────────────────────────────────────────
 
 interface MailIngestBody {
-  action?: "ingest" | "summarize";
+  action?: "ingest" | "summarize" | "send";
   threadId?: string;
   messageId?: string;
   fromEmail?: string;
   toEmails?: string[];
+  toEmail?: string;
+  recipientToken?: string;
   subject?: string;
   text?: string;
+  body?: string;
   orgId?: string;
+  orgRoster?: string;
+  userId?: string;
   receivedAt?: string;
 }
 
@@ -385,6 +391,75 @@ async function summarizeMailbox(req: NextRequest) {
   return { summary, items: compact.slice(0, 6) };
 }
 
+// ── Send email via Nylas v3 ──────────────────────────────────────────
+
+function resolveRecipientFromRoster(token: string, roster?: string): { email?: string; name?: string } {
+  if (!roster || !token) return {};
+  const lower = token.toLowerCase();
+  const lines = roster.split("\n").filter((l) => l.startsWith("- "));
+
+  for (const line of lines) {
+    const raw = line.replace(/^- /, "");
+    const parts = raw.split("|").map((p) => p.trim()).filter(Boolean);
+    const name = parts[0]?.toLowerCase() ?? "";
+    const firstName = name.split(/\s+/)[0] ?? "";
+    const email = parts.find((p) => p.includes("@"))?.trim();
+    const userId = parts.find((p) => /^[a-z0-9._-]{2,}$/i.test(p) && !p.includes("@"))?.toLowerCase();
+
+    if (
+      lower === name ||
+      lower === firstName ||
+      lower === userId ||
+      (email && lower === email.split("@")[0]?.toLowerCase())
+    ) {
+      return { email, name: parts[0] };
+    }
+  }
+  return {};
+}
+
+async function handleSendEmail(body: MailIngestBody) {
+  let toEmail = body.toEmail?.trim();
+  let recipientName: string | undefined;
+
+  if (!toEmail && body.recipientToken) {
+    const resolved = resolveRecipientFromRoster(body.recipientToken, body.orgRoster);
+    toEmail = resolved.email;
+    recipientName = resolved.name;
+  }
+
+  if (!toEmail) {
+    return NextResponse.json(
+      { error: "Could not resolve recipient email. Provide a direct email address or a name from your org." },
+      { status: 400 }
+    );
+  }
+
+  const subject = body.subject?.trim() || "Message from Neo";
+  const emailBody = body.body?.trim() || body.text?.trim() || subject;
+
+  const result = await nylasSendEmail({
+    to: [{ email: toEmail, name: recipientName }],
+    subject,
+    body: emailBody,
+  });
+
+  if (!result.ok) {
+    return NextResponse.json(
+      { error: "Failed to send email", details: result.error },
+      { status: 500 }
+    );
+  }
+
+  return NextResponse.json({
+    sent: true,
+    toEmail,
+    recipientName,
+    subject,
+    messageId: result.messageId,
+  });
+}
+
 // ── POST /api/agents/mail ────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
@@ -396,6 +471,10 @@ export async function POST(req: NextRequest) {
   }
 
   const action = body.action ?? "ingest";
+
+  if (action === "send") {
+    return handleSendEmail(body);
+  }
 
   if (action === "summarize") {
     try {

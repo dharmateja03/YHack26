@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import ConnectionCard from "@/components/ConnectionCard";
-import { useUser } from "@auth0/nextjs-auth0/client";
 
 interface ConnectedState {
   github: boolean;
@@ -65,7 +64,6 @@ const ONBOARDING_STEPS = ["Profile", "Org", "Integrations", "Done"] as const;
 type OnboardingStep = 0 | 1 | 2 | 3;
 
 export default function SettingsPage() {
-  const { user, isLoading } = useUser();
   const searchParams = useSearchParams();
   const router = useRouter();
   const isOnboarding = searchParams.get("onboarding") === "1";
@@ -118,8 +116,6 @@ export default function SettingsPage() {
   };
 
   useEffect(() => {
-    if (isLoading) return;
-
     const version = ++loadVersionRef.current;
     let cancelled = false;
     const load = async () => {
@@ -150,7 +146,7 @@ export default function SettingsPage() {
         if (data) {
           setOrg(data);
           setWorkEmail(data.me?.workEmail ?? data.me?.email ?? "");
-          setDisplayName(data.me?.name ?? user?.name ?? "");
+          setDisplayName(data.me?.name ?? "");
         }
       }
 
@@ -171,7 +167,7 @@ export default function SettingsPage() {
     return () => {
       cancelled = true;
     };
-  }, [isLoading, user?.sub]);
+  }, []);
 
   const toInviteUrl = (token: string) => {
     if (typeof window === "undefined") return `/join/${token}`;

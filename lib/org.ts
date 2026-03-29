@@ -201,41 +201,42 @@ async function getOrgContextForUserSqlite(sqlite: SqliteDb, userId: string): Pro
 export async function getOrgContextForUser(userId: string): Promise<OrgContext | null> {
   const mem = getMemoryStore();
   const db = await getDbSafe();
-  const sqlite = db ? null : await getSqliteDbSafe();
 
   if (db) {
     const me = (await db
       .collection<OrgMemberDoc>(COLLECTIONS.orgMembers)
       .findOne({ userId })) as OrgMemberDoc | null;
 
-    if (!me) return null;
+    if (me) {
+      const [org, members, invites] = await Promise.all([
+        db.collection<OrgDoc>(COLLECTIONS.organizations).findOne({ orgId: me.orgId }) as Promise<OrgDoc | null>,
+        db
+          .collection<OrgMemberDoc>(COLLECTIONS.orgMembers)
+          .find({ orgId: me.orgId })
+          .sort({ role: -1, joinedAt: 1 })
+          .toArray() as Promise<OrgMemberDoc[]>,
+        me.role === "manager"
+          ? (db
+              .collection<OrgInviteDoc>(COLLECTIONS.orgInvites)
+              .find({ orgId: me.orgId, expiresAt: { $gt: now() } })
+              .sort({ createdAt: -1 })
+              .toArray() as Promise<OrgInviteDoc[]>)
+          : Promise.resolve([] as OrgInviteDoc[]),
+      ]);
 
-    const [org, members, invites] = await Promise.all([
-      db.collection<OrgDoc>(COLLECTIONS.organizations).findOne({ orgId: me.orgId }) as Promise<OrgDoc | null>,
-      db
-        .collection<OrgMemberDoc>(COLLECTIONS.orgMembers)
-        .find({ orgId: me.orgId })
-        .sort({ role: -1, joinedAt: 1 })
-        .toArray() as Promise<OrgMemberDoc[]>,
-      me.role === "manager"
-        ? (db
-            .collection<OrgInviteDoc>(COLLECTIONS.orgInvites)
-            .find({ orgId: me.orgId, expiresAt: { $gt: now() } })
-            .sort({ createdAt: -1 })
-            .toArray() as Promise<OrgInviteDoc[]>)
-        : Promise.resolve([] as OrgInviteDoc[]),
-    ]);
-
-    if (!org) return null;
-
-    return {
-      org,
-      me: sanitizeMember(me),
-      members: members.map(sanitizeMember),
-      invites,
-    };
+      if (org) {
+        return {
+          org,
+          me: sanitizeMember(me),
+          members: members.map(sanitizeMember),
+          invites,
+        };
+      }
+    }
+    // MongoDB connected but no data for this user — fall through to SQLite
   }
 
+  const sqlite = await getSqliteDbSafe();
   if (sqlite) {
     const context = await getOrgContextForUserSqlite(sqlite, userId);
     if (context) return context;
@@ -307,7 +308,7 @@ export async function resolveOrgMemberUserId(input: {
         return matches[0].userId;
       }
     }
-    return userId;
+    // MongoDB connected but found no match — fall through to SQLite
   }
 
   const sqlite = await getSqliteDbSafe();
