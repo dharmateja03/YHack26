@@ -8,8 +8,8 @@ import {
   getWorkEmailsByUserIds,
   resolveOrgMemberUserId,
 } from "@/lib/org";
-import { getTokenForUser } from "@/lib/auth0";
 import { getDb, COLLECTIONS } from "@/lib/mongodb";
+import { createNylasEvent } from "@/lib/nylas";
 
 interface CalendarEvent {
   eventId: string;
@@ -563,37 +563,28 @@ async function createCalendarInvite(
   emails: string[],
   threadText?: string,
   threadId?: string,
-  ownerUserId?: string
-): Promise<void> {
-  const userToken = ownerUserId ? await getTokenForUser(ownerUserId, "calendar") : null;
-  const nylasToken = userToken || process.env.NYLAS_API_KEY;
-  if (!nylasToken) return;
-
+  _ownerUserId?: string
+): Promise<string | null> {
   try {
-    await fetch("https://api.nylas.com/events", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${nylasToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        calendar_id: "primary",
-        title,
-        description: [
-          threadId ? `Neo thread: ${threadId}` : "",
-          threadText ? `Thread context: ${threadText}` : "",
-        ]
-          .filter(Boolean)
-          .join("\n"),
-        when: {
-          start_time: Math.floor(new Date(slot.start).getTime() / 1000),
-          end_time: Math.floor(new Date(slot.end).getTime() / 1000),
-        },
-        participants: emails.map((email) => ({ email })),
-      }),
+    const description = [
+      threadId ? `Neo thread: ${threadId}` : "",
+      threadText ? `Thread context: ${threadText}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const result = await createNylasEvent({
+      title,
+      startTime: Math.floor(new Date(slot.start).getTime() / 1000),
+      endTime: Math.floor(new Date(slot.end).getTime() / 1000),
+      attendeeEmails: emails,
+      description,
     });
-  } catch {
-    // Best-effort external sync.
+
+    return result.id;
+  } catch (err) {
+    console.error("Nylas event creation failed:", err);
+    return null;
   }
 }
 
