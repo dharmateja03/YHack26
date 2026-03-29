@@ -190,14 +190,38 @@ function NeoChat() {
     }
 
     try {
-      // Fetch signed URL or fall back to public agent ID
+      // Request mic permission upfront so the browser prompt appears immediately
+      await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      setVoiceError("Microphone access denied");
+      return;
+    }
+
+    try {
       const res = await fetch("/api/elevenlabs/signed-url");
       const data = await res.json();
 
+      const sessionOpts: Record<string, unknown> = {
+        overrides: {
+          agent: {
+            firstMessage: "Hey, I'm Neo. What can I help with?",
+            prompt: {
+              prompt:
+                "You are Neo, a highly efficient voice copilot for engineering teams. " +
+                "You are precise, calm, and helpful — a central hub for engineering requests. " +
+                "Keep responses under two sentences unless more detail is requested. " +
+                "Classify intent (brief, PR review, scheduling, root-cause, sprint, general), " +
+                "gather any missing info with one concise question, then route and provide actionable next steps. " +
+                "Use natural speech patterns. Confirm understanding with brief check-ins.",
+            },
+          },
+        },
+      };
+
       if (data.signedUrl) {
-        conversation.startSession({ signedUrl: data.signedUrl });
+        await conversation.startSession({ signedUrl: data.signedUrl, ...sessionOpts });
       } else if (data.agentId) {
-        conversation.startSession({ agentId: data.agentId });
+        await conversation.startSession({ agentId: data.agentId, ...sessionOpts });
       } else {
         setVoiceError("No agent configured");
       }

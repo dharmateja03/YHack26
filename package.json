@@ -13,6 +13,9 @@
     "seed:full-demo": "node scripts/seed-sqlite-demo.mjs --mode full",
     "seed:org-tax": "npx ts-node scripts/seed-org-tax.ts",
     "sync:pinecone": "node scripts/sync-pinecone.mjs",
+    "video:dev": "remotion preview",
+    "video:render": "remotion render ProductLaunch",
+    "video:render-all": "remotion render ProductLaunch && remotion render Typography",
     "test": "jest",
     "test:dharma": "jest __tests__/dharma.test.ts",
     "test:keshav": "jest __tests__/keshav.test.ts",
@@ -21,6 +24,9 @@
   },
   "dependencies": {
     "@elevenlabs/react": "^1.0.0",
+    "@remotion/cli": "^4.0.441",
+    "@remotion/player": "^4.0.441",
+    "@remotion/tailwind": "^4.0.441",
     "axios": "^1.6.0",
     "better-sqlite3": "^12.8.0",
     "date-fns": "^3.6.0",
@@ -29,10 +35,12 @@
     "openai": "^4.40.0",
     "react": "^18",
     "react-dom": "^18",
+    "remotion": "^4.0.441",
     "tailwindcss": "^3.4.0",
     "zod": "^3.22.4"
   },
   "devDependencies": {
+    "@remotion/eslint-config": "^4.0.441",
     "@types/jest": "^29",
     "@types/node": "^20",
     "@types/react": "^18",
