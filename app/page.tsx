@@ -22,6 +22,32 @@ const INITIAL_AGENTS: AgentStatus[] = [
   { name: "Neo Sprint", key: "sprint", lastRun: null, status: "idle" },
 ];
 
+const DEFAULT_USER_ID = "user-1";
+const DEFAULT_TEAM_ID = "team-1";
+
+function parsePrId(text: string): string | null {
+  const m = text.match(/\bpr[-\s#:]*(\d+)\b/i);
+  return m ? `pr-${m[1]}` : null;
+}
+
+function parseTicketId(text: string): string | null {
+  const m = text.match(/\b(?:jira|ticket)[-\s#:]*(\d+)\b/i);
+  return m ? `JIRA-${m[1]}` : null;
+}
+
+function parsePreferredTime(text: string): string | undefined {
+  const m = text.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i);
+  if (!m) return undefined;
+  let hour = Number(m[1]);
+  const minute = Number(m[2] ?? "0");
+  const meridiem = m[3].toLowerCase();
+  if (meridiem === "pm" && hour < 12) hour += 12;
+  if (meridiem === "am" && hour === 12) hour = 0;
+  const d = new Date();
+  d.setHours(hour, minute, 0, 0);
+  return d.toISOString();
+}
+
 export default function HomePage() {
   const { user, isLoading } = useUser();
   const router = useRouter();
@@ -35,37 +61,91 @@ export default function HomePage() {
   const [agents, setAgents]       = useState<AgentStatus[]>(INITIAL_AGENTS);
   const [lastQuery, setLastQuery] = useState<string | null>(null);
 
-  if (isLoading || !user) return null;
+  const handleTalkToNeo = async (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
 
-  const handleTalkToNeo = () => {
     if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
-      alert("Speech recognition not supported in this browser.");
+      void routeTranscript("morning brief");
       return;
     }
+
+    // Prompt for microphone access up front to avoid immediate recognition failures.
+    try {
+      if (navigator.mediaDevices?.getUserMedia) {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach((t) => t.stop());
+      }
+    } catch {
+      alert("Microphone permission is required to listen.");
+      return;
+    }
+
+    let gotResult = false;
+
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     const recognition = new SR();
     recognition.lang = "en-US";
     recognition.interimResults = false;
     recognition.maxAlternatives = 1;
+
     setListening(true);
     recognition.onresult = async (e: any) => {
+      gotResult = true;
       const t = e.results[0][0].transcript.toLowerCase();
       setLastQuery(t);
       setListening(false);
       await routeTranscript(t);
     };
-    recognition.onerror = () => setListening(false);
-    recognition.onend   = () => setListening(false);
-    recognition.start();
+
+    recognition.onerror = () => {
+      setListening(false);
+    };
+
+    recognition.onend = () => {
+      setListening(false);
+    };
+
+    try {
+      recognition.start();
+    } catch {
+      setListening(false);
+    }
   };
 
   const routeTranscript = async (t: string) => {
     let endpoint = "/api/agents/brief";
-    let agentKey = "brief";
-    if (t.includes("schedule") || t.includes("meet"))                           { endpoint = "/api/agents/schedule/find";  agentKey = "sched";  }
-    else if (t.includes("why") || t.includes("blocked") || t.includes("root")) { endpoint = "/api/agents/rootcause";       agentKey = "root";   }
-    else if (t.includes("sprint") || t.includes("forecast"))                    { endpoint = "/api/agents/sprint/forecast"; agentKey = "sprint"; }
-    else if (t.includes("pr") || t.includes("pull request") || t.includes("review")) { endpoint = "/api/agents/pr/scan"; agentKey = "pr"; }
+    let agentKey: AgentStatus["key"] = "brief";
+    let payload: Record<string, unknown> = {
+      userId: DEFAULT_USER_ID,
+      type: t.includes("evening") ? "evening" : "morning",
+    };
+
+    if (t.includes("schedule") || t.includes("meet")) {
+      endpoint = "/api/agents/schedule/find";
+      agentKey = "sched";
+      payload = {
+        participantIds: [DEFAULT_USER_ID, "user-2"],
+        durationMins: 30,
+        preferredTime: parsePreferredTime(t),
+      };
+    } else if (t.includes("why") || t.includes("blocked") || t.includes("root")) {
+      endpoint = "/api/agents/rootcause";
+      agentKey = "root";
+      payload = {
+        prId: parsePrId(t) ?? undefined,
+        ticketId: parseTicketId(t) ?? undefined,
+      };
+      if (!payload.prId && !payload.ticketId) payload = { prId: "pr-1" };
+    } else if (t.includes("sprint") || t.includes("forecast")) {
+      endpoint = "/api/agents/sprint/forecast";
+      agentKey = "sprint";
+      payload = { teamId: DEFAULT_TEAM_ID };
+    } else if (t.includes("pr") || t.includes("pull request") || t.includes("review")) {
+      endpoint = "/api/agents/pr/scan";
+      agentKey = "pr";
+      payload = { teamId: DEFAULT_TEAM_ID };
+    }
 
     setAgents(prev => prev.map(a => a.key === agentKey ? { ...a, status: "running" } : a));
 
@@ -73,8 +153,18 @@ export default function HomePage() {
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "audio/mpeg" },
-        body: JSON.stringify({ transcript: t }),
+        body: JSON.stringify(payload),
       });
+
+      if (!res.ok) {
+        setAgents(prev => prev.map(a => a.key === agentKey ? {
+          ...a,
+          status: "error",
+          lastRun: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        } : a));
+        return;
+      }
+
       setAgents(prev => prev.map(a => a.key === agentKey ? {
         ...a, status: "idle",
         lastRun: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
@@ -116,6 +206,7 @@ export default function HomePage() {
         )}
 
         <button
+          type="button"
           onClick={handleTalkToNeo}
           disabled={listening}
           className={`relative z-10 w-48 h-48 rounded-full flex flex-col items-center justify-center gap-2 transition-transform duration-300
@@ -135,7 +226,15 @@ export default function HomePage() {
                 <div
                   key={i}
                   className="w-[3px] rounded-full bg-cyan-400 origin-bottom"
-                  style={{ height: "100%", transform: `scaleY(${h})`, animation: `bar-wave ${0.5 + i * 0.07}s ease-in-out infinite`, animationDelay: `${i * 0.08}s` }}
+                  style={{
+                    height: "100%",
+                    transform: `scaleY(${h})`,
+                    animationName: "bar-wave",
+                    animationDuration: `${0.5 + i * 0.07}s`,
+                    animationTimingFunction: "ease-in-out",
+                    animationIterationCount: "infinite",
+                    animationDelay: `${i * 0.08}s`,
+                  }}
                 />
               ))}
             </div>

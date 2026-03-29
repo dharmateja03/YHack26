@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useUser } from "@auth0/nextjs-auth0/client";
 import { useRouter } from "next/navigation";
 import ConnectionCard from "@/components/ConnectionCard";
+import { useUser } from "@auth0/nextjs-auth0/client";
 
 interface ConnectedState {
   github: boolean;
@@ -23,26 +24,28 @@ const INTEGRATIONS = ["github", "slack", "jira", "calendar"] as const;
 
 export default function SettingsPage() {
   const { user, isLoading } = useUser();
-  const router = useRouter();
-
-  useEffect(() => {
-    if (!isLoading && !user) router.replace("/login");
-  }, [user, isLoading, router]);
-
   const [connected, setConnected] = useState<ConnectedState>({
     github: false, slack: false, jira: false, calendar: false,
   });
   const [accountNames, setAccountNames] = useState<AccountNames>({});
 
   useEffect(() => {
+    if (isLoading || !user) return;
+
+    let cancelled = false;
     fetch("/api/users/me")
-      .then(r => r.json())
+      .then(r => (r.ok ? r.json() : null))
       .then(data => {
+        if (!data || cancelled) return;
         if (data.connected)    setConnected(data.connected);
         if (data.accountNames) setAccountNames(data.accountNames);
       })
       .catch(() => {});
-  }, []);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoading, user]);
 
   const handleConnect = async (integration: string) => {
     const res  = await fetch(`/api/auth/connect/${integration}`, { method: "POST" });
