@@ -12,13 +12,14 @@ export async function GET(req: Request) {
     .toArray();
 
   const now = Date.now();
-  const prs = rows.map((pr) => ({
+  const prs = rows.map((pr: any) => ({
     prId: pr.prId,
     title: pr.title,
     author: pr.author,
     waitHours: Math.floor((now - new Date(pr.updatedAt ?? Date.now()).getTime()) / 3_600_000),
+    approvals: pr.approvals ?? 0,
+    state: pr.state ?? "open",
   }));
 
   return Response.json({ prs });
 }
-
