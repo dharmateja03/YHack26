@@ -1,128 +1,265 @@
+"use client";
+
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 
-const FOLLOW_UP_FEATURES = [
+/* ─── feature data ─── */
+
+const FEATURES = [
   {
-    id: "02",
-    agent: "Neo Mail",
-    title: "Email follow-ups",
-    detail:
-      "Sends confirmations, reschedule notes, and reminders directly from the meeting thread.",
+    num: "01",
+    label: "Neo Mail",
+    title: "Email that writes itself.",
+    body: "Confirmations, reschedule notes, and follow-ups — sent from meeting context, not from scratch.",
   },
   {
-    id: "03",
-    agent: "Neo Brief",
-    title: "Auto briefs",
-    detail:
-      "Creates crisp pre-reads and post-meeting summaries with action items and owners.",
+    num: "02",
+    label: "Neo Brief",
+    title: "Briefs before you ask.",
+    body: "Pre-reads, post-meeting summaries, and action items — assembled the moment a meeting ends.",
   },
   {
-    id: "04",
-    agent: "Neo PR",
-    title: "PR alignment",
-    detail:
-      "Maps meeting outcomes to pull requests and highlights what needs review next.",
+    num: "03",
+    label: "Neo PR",
+    title: "Code meets calendar.",
+    body: "Meeting outcomes mapped to pull requests. Review priorities surfaced instantly.",
   },
   {
-    id: "05",
-    agent: "Neo Productivity",
-    title: "Productivity tracking",
-    detail:
-      "Tracks execution momentum across meetings, email loops, and code delivery.",
+    num: "04",
+    label: "Neo Productivity",
+    title: "Momentum, measured.",
+    body: "Execution velocity across meetings, email, and code delivery — one clear signal.",
   },
 ];
 
+/* ─── scroll-triggered reveal ─── */
+
+function useReveal(threshold = 0.15) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      ([e]) => {
+        if (e.isIntersecting) {
+          setVisible(true);
+          obs.disconnect();
+        }
+      },
+      { threshold },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [threshold]);
+
+  return { ref, visible };
+}
+
+function Reveal({
+  children,
+  delay = 0,
+  className = "",
+}: {
+  children: ReactNode;
+  delay?: number;
+  className?: string;
+}) {
+  const { ref, visible } = useReveal();
+  return (
+    <div
+      ref={ref}
+      className={className}
+      style={{
+        opacity: visible ? 1 : 0,
+        transform: visible ? "translateY(0)" : "translateY(40px)",
+        transition: `opacity 0.9s cubic-bezier(0.16,1,0.3,1) ${delay}ms, transform 0.9s cubic-bezier(0.16,1,0.3,1) ${delay}ms`,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+/* ─── page ─── */
+
 export default function LandingPage() {
   return (
-    <div className="relative min-h-[calc(100vh-65px)] overflow-hidden bg-[#07090d] text-white">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_75%_60%_at_50%_0%,rgba(34,211,238,0.16),transparent_70%)]" />
-      <div className="pointer-events-none absolute left-1/2 top-20 h-[380px] w-[380px] -translate-x-1/2 rounded-full bg-cyan-500/10 blur-3xl" />
-      <div
-        className="pointer-events-none absolute inset-0 opacity-[0.035]"
-        style={{
-          backgroundImage:
-            "linear-gradient(rgba(34,211,238,1) 1px, transparent 1px), linear-gradient(90deg, rgba(34,211,238,1) 1px, transparent 1px)",
-          backgroundSize: "74px 74px",
-        }}
-      />
+    <div className="min-h-screen text-[#e8e8e8] selection:bg-cyan-400/20">
+      {/* ── HERO ── */}
+      <section className="relative flex min-h-[90vh] flex-col items-center justify-center px-6">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_50%_40%_at_50%_0%,rgba(34,211,238,0.05),transparent_70%)]" />
 
-      <section className="relative z-10 mx-auto w-full max-w-5xl px-6 pb-16 pt-12 md:pt-16">
-        <div className="space-y-4 text-center">
-          <p className="text-[10px] uppercase tracking-[0.28em] text-cyan-300/80">Neo Workflow</p>
-          <h1 className="font-display text-5xl italic leading-[0.94] text-white md:text-7xl">
-            Start with context, then execute everything.
+        <div className="relative z-10 text-center">
+          <p className="hero-reveal text-[10px] uppercase tracking-[0.35em] text-cyan-400/60">
+            The Affordable AI Executive Assistant
+          </p>
+
+          <h1
+            className="hero-reveal mt-6 text-[clamp(3.5rem,8vw,7rem)] leading-[1] tracking-tight text-white"
+            style={{
+              fontFamily: "var(--font-display)",
+              animationDelay: "100ms",
+            }}
+          >
+            Neos<span className="text-cyan-400">is</span>
           </h1>
-          <p className="mx-auto max-w-2xl text-[14px] leading-relaxed text-zinc-400 md:text-[15px]">
-            `Neo Sched` stays as the constant context layer. Then your flow continues one step at a time:
-            email, briefs, PR decisions, and productivity signal.
-          </p>
-        </div>
 
-        <div className="mt-8 rounded-[28px] border border-cyan-400/30 bg-gradient-to-b from-cyan-500/10 to-zinc-900/80 p-6 md:p-8">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-[10px] uppercase tracking-[0.24em] text-cyan-300">Neo Sched</p>
-              <h2 className="mt-1 text-2xl text-white md:text-3xl">Context-first scheduling engine</h2>
-            </div>
-            <span className="rounded-full border border-cyan-400/40 bg-cyan-500/10 px-3 py-1 text-[11px] uppercase tracking-[0.2em] text-cyan-200">
-              Always On
-            </span>
-          </div>
-          <p className="mt-3 max-w-3xl text-[13px] leading-relaxed text-zinc-300 md:text-[14px]">
-            Neo resolves participants, time constraints, and intent before any downstream action. This context is reused by all other agents.
+          <p
+            className="hero-reveal mx-auto mt-6 max-w-sm text-[13px] leading-[1.7] text-zinc-500"
+            style={{ animationDelay: "220ms" }}
+          >
+            Start with context. Then execute everything —
+            <br className="hidden sm:inline" />
+            email, briefs, PRs, momentum — one at a time.
           </p>
 
-          <div className="mt-5 grid gap-3 sm:grid-cols-3">
-            <div className="rounded-xl border border-zinc-700/70 bg-zinc-900/60 px-4 py-3">
-              <p className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Time Saved</p>
-              <p className="mt-1 text-2xl font-semibold text-cyan-300">31h / week</p>
-            </div>
-            <div className="rounded-xl border border-zinc-700/70 bg-zinc-900/60 px-4 py-3">
-              <p className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Flow Mode</p>
-              <p className="mt-1 text-2xl font-semibold text-zinc-100">Sequential</p>
-            </div>
-            <div className="rounded-xl border border-zinc-700/70 bg-zinc-900/60 px-4 py-3">
-              <p className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Output</p>
-              <p className="mt-1 text-2xl font-semibold text-zinc-100">Email + Brief + PR</p>
-            </div>
+          <div
+            className="hero-reveal mt-10 flex items-center justify-center gap-4"
+            style={{ animationDelay: "360ms" }}
+          >
+            <Link
+              href="/neo"
+              className="rounded-full bg-white px-7 py-2.5 text-[11px] font-medium uppercase tracking-[0.18em] text-[#09090b] transition-all duration-300 hover:bg-cyan-300 hover:shadow-[0_0_30px_rgba(34,211,238,0.2)]"
+            >
+              Launch Neo
+            </Link>
+            <Link
+              href="/dashboard"
+              className="rounded-full border border-white/[0.08] px-7 py-2.5 text-[11px] uppercase tracking-[0.18em] text-zinc-500 transition-all duration-300 hover:border-white/20 hover:text-white"
+            >
+              Dashboard
+            </Link>
           </div>
         </div>
 
-        <div className="relative mt-8 pl-6">
-          <div className="pointer-events-none absolute bottom-2 left-2 top-2 w-px bg-gradient-to-b from-cyan-400/70 to-cyan-400/10" />
-          <div className="space-y-4">
-            {FOLLOW_UP_FEATURES.map((item, i) => (
-              <article
-                key={item.id}
-                className="fade-up opacity-0 rounded-2xl border border-zinc-800/80 bg-zinc-900/65 p-4 md:p-5"
-                style={{ animationDelay: `${i * 190}ms` }}
-              >
-                <div className="flex items-center gap-3">
-                  <span className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-cyan-400/40 bg-cyan-500/10 text-[10px] text-cyan-200">
-                    {item.id}
+        <div className="absolute bottom-10 flex flex-col items-center">
+          <div className="scroll-line h-10 w-px bg-gradient-to-b from-transparent via-zinc-700 to-transparent" />
+        </div>
+      </section>
+
+      {/* ── NEO SCHED — constant context block ── */}
+      <section className="px-6 pb-28">
+        <div className="mx-auto max-w-[640px]">
+          <Reveal>
+            <div className="relative overflow-hidden rounded-2xl border border-white/[0.06] bg-white/[0.02] p-8 md:p-10">
+              <div className="pointer-events-none absolute -top-20 left-1/2 h-40 w-40 -translate-x-1/2 rounded-full bg-cyan-400/[0.06] blur-3xl" />
+
+              <div className="relative">
+                <div className="flex items-center gap-2.5">
+                  <span className="relative flex h-2 w-2">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-cyan-400 opacity-40" />
+                    <span className="relative inline-flex h-2 w-2 rounded-full bg-cyan-400" />
                   </span>
-                  <p className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/80">{item.agent}</p>
+                  <span className="text-[10px] uppercase tracking-[0.3em] text-cyan-400/70">
+                    Always On
+                  </span>
                 </div>
-                <h3 className="mt-2 text-[20px] text-white md:text-[22px]">{item.title}</h3>
-                <p className="mt-1 text-[13px] leading-relaxed text-zinc-400">{item.detail}</p>
-              </article>
-            ))}
-          </div>
-        </div>
 
-        <div className="mt-8 flex flex-wrap justify-center gap-3">
-          <Link
-            href="/neo"
-            className="rounded-xl border border-cyan-400/40 bg-cyan-500/12 px-5 py-3 text-[12px] uppercase tracking-[0.2em] text-cyan-200 transition hover:bg-cyan-500/22"
-          >
-            Launch Neo
-          </Link>
-          <Link
-            href="/dashboard"
-            className="rounded-xl border border-zinc-700 px-5 py-3 text-[12px] uppercase tracking-[0.2em] text-zinc-300 transition hover:border-zinc-500 hover:text-white"
-          >
-            Open Dashboard
-          </Link>
+                <h2
+                  className="mt-6 text-[2rem] tracking-tight text-white md:text-[2.5rem]"
+                  style={{ fontFamily: "var(--font-display)" }}
+                >
+                  Neo Sched
+                </h2>
+
+                <p className="mt-3 max-w-md text-[13px] leading-[1.7] text-zinc-500">
+                  The context layer. Resolves participants, time, and intent
+                  before any downstream action. Every agent reads from here.
+                </p>
+
+                <div className="mt-8 grid grid-cols-3 gap-3">
+                  {[
+                    { label: "Time Saved", value: "31h", unit: "/wk" },
+                    { label: "Flow", value: "Sequential", unit: "" },
+                    { label: "Agents", value: "4", unit: " active" },
+                  ].map((s) => (
+                    <div
+                      key={s.label}
+                      className="rounded-xl border border-white/[0.04] bg-white/[0.015] px-4 py-3"
+                    >
+                      <p className="text-[9px] uppercase tracking-[0.25em] text-zinc-600">
+                        {s.label}
+                      </p>
+                      <p
+                        className="mt-1.5 text-lg text-white"
+                        style={{ fontFamily: "var(--font-display)" }}
+                      >
+                        {s.value}
+                        {s.unit && (
+                          <span className="text-sm text-zinc-600">
+                            {s.unit}
+                          </span>
+                        )}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </Reveal>
         </div>
+      </section>
+
+      {/* ── divider ── */}
+      <div className="mx-auto h-px w-12 bg-white/[0.06]" />
+
+      {/* ── FEATURES — staggered one-by-one ── */}
+      <section className="px-6 py-28">
+        <div className="mx-auto max-w-[640px] space-y-24">
+          {FEATURES.map((f) => (
+            <Reveal key={f.num}>
+              <article>
+                <div className="flex items-center gap-3">
+                  <span className="text-[11px] tabular-nums text-zinc-700">
+                    {f.num}
+                  </span>
+                  <span className="h-px flex-1 bg-white/[0.05]" />
+                  <span className="text-[10px] uppercase tracking-[0.25em] text-zinc-600">
+                    {f.label}
+                  </span>
+                </div>
+
+                <h3
+                  className="mt-5 text-[1.65rem] tracking-tight text-white md:text-[2rem]"
+                  style={{ fontFamily: "var(--font-display)" }}
+                >
+                  {f.title}
+                </h3>
+
+                <p className="mt-3 text-[13px] leading-[1.7] text-zinc-500">
+                  {f.body}
+                </p>
+              </article>
+            </Reveal>
+          ))}
+        </div>
+      </section>
+
+      {/* ── FINAL CTA ── */}
+      <section className="px-6 pb-32 pt-8">
+        <Reveal>
+          <div className="mx-auto max-w-[640px] text-center">
+            <h2
+              className="text-4xl tracking-tight text-white md:text-5xl"
+              style={{ fontFamily: "var(--font-display)" }}
+            >
+              Start with Neo.
+            </h2>
+            <p className="mt-4 text-[13px] text-zinc-600">
+              Context first. Everything else follows.
+            </p>
+            <div className="mt-8">
+              <Link
+                href="/neo"
+                className="inline-block rounded-full bg-white px-8 py-3 text-[11px] font-medium uppercase tracking-[0.18em] text-[#09090b] transition-all duration-300 hover:bg-cyan-300 hover:shadow-[0_0_30px_rgba(34,211,238,0.2)]"
+              >
+                Launch Neo
+              </Link>
+            </div>
+          </div>
+        </Reveal>
       </section>
     </div>
   );

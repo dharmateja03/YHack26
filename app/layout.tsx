@@ -5,7 +5,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Neosis",
-  description: "AI Executive Assistant for Engineering Teams",
+  description: "The Affordable AI Executive Assistant",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

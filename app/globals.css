@@ -67,6 +67,25 @@ body {
 .slide-up     { animation: slide-up 0.35s cubic-bezier(0.16,1,0.3,1) forwards; }
 .fade-up      { animation: fade-up 0.4s ease-out forwards; }
 
+/* Hero entrance stagger */
+@keyframes hero-reveal {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.hero-reveal {
+  opacity: 0;
+  animation: hero-reveal 0.9s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Scroll line pulse */
+@keyframes scroll-line {
+  0%, 100% { opacity: 0.15; }
+  50%      { opacity: 0.45; }
+}
+.scroll-line {
+  animation: scroll-line 2.5s ease-in-out infinite;
+}
+
 /* Typing cursor blink */
 @keyframes cursor-blink {
   0%, 100% { opacity: 1; }

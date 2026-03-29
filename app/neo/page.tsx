@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { ConversationProvider, useConversation } from "@elevenlabs/react";
 import VoicePlayer from "@/components/VoicePlayer";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -11,12 +10,6 @@ interface ChatMessage {
   content: string;
   agent?: string;
   timestamp: string;
-}
-
-interface LiveConnectionInfo {
-  signedUrl: string | null;
-  agentId: string | null;
-  warning?: string;
 }
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -45,23 +38,15 @@ function generateSessionId() {
   return `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function normalizeAsrTranscript(text: string): string {
-  let t = text.trim().replace(/^neo[,\s]+/i, "").trim();
-  t = t
-    .replace(/\bi'm\b/gi, "I am").replace(/\bdon't\b/gi, "do not")
-    .replace(/\bcan't\b/gi, "cannot").replace(/\bwon't\b/gi, "will not")
-    .replace(/\bwanna\b/gi, "want to").replace(/\bgonna\b/gi, "going to");
-  return t.replace(/\s+/g, " ").trim();
+function getSpeechRecognition(): (new () => SpeechRecognition) | null {
+  if (typeof window === "undefined") return null;
+  return (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition || null;
 }
 
 // ── Root export ──────────────────────────────────────────────────────────────
 
 export default function NeoPage() {
-  return (
-    <ConversationProvider>
-      <NeoChat />
-    </ConversationProvider>
-  );
+  return <NeoChat />;
 }
 
 // ── Main Chat UI ─────────────────────────────────────────────────────────────
@@ -74,45 +59,19 @@ function NeoChat() {
   const [sessionId]                         = useState(() => generateSessionId());
   const [currentUserId, setCurrentUserId]   = useState(DEFAULT_USER_ID);
   const [thinkingPhrase, setThinkingPhrase] = useState("Thinking…");
-  const [pendingVoiceText, setPendingVoiceText] = useState("");
 
-  const chatEndRef             = useRef<HTMLDivElement>(null);
-  const pendingStopDispatchRef = useRef<string | null>(null);
-  const inputRef               = useRef<HTMLInputElement>(null);
+  // Mic / speech recognition state
+  const [micOn, setMicOn]                   = useState(false);
+  const [liveTranscript, setLiveTranscript] = useState("");
+  const [micSupported]                      = useState(() => getSpeechRecognition() !== null);
+  const recognitionRef                      = useRef<SpeechRecognition | null>(null);
 
-  // ElevenLabs
-  const conversation = useConversation({
-    volume: 1,
-    onDisconnect: () => setPendingVoiceText(""),
-    onError:      () => {},
-    onMessage:    ({ role, message }) => { if (role === "user") setPendingVoiceText(message); },
-  });
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  const inputRef   = useRef<HTMLInputElement>(null);
 
-  const micOn       = conversation.status === "connected";
-  const micStarting = conversation.status === "connecting";
   const speakerActive = Boolean(audioUrl);
 
   // ── Effects ────────────────────────────────────────────────────────────────
-
-  // Kill mic when speaker is active (Neo talks → mic must be off)
-  useEffect(() => {
-    if (speakerActive && micOn) { try { conversation.endSession(); } catch {} }
-  }, [speakerActive, micOn, conversation]);
-
-  // Clear audio on mic connect
-  useEffect(() => {
-    if (!micOn && !micStarting) return;
-    setAudioUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null; });
-  }, [micOn, micStarting]);
-
-  // Send queued voice text after mic is turned off
-  useEffect(() => {
-    if (micOn || micStarting || sending) return;
-    const queued = pendingStopDispatchRef.current;
-    if (!queued) return;
-    pendingStopDispatchRef.current = null;
-    void sendMessage(queued, true);
-  }, [micOn, micStarting, sending]);
 
   // Auto-scroll to bottom
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chatMessages, sending]);
@@ -132,9 +91,19 @@ function NeoChat() {
     return () => clearInterval(iv);
   }, [sending]);
 
+  // Stop mic if Neo starts speaking
+  useEffect(() => {
+    if (speakerActive && micOn) stopMic(false);
+  }, [speakerActive]);
+
+  // Cleanup recognition on unmount
+  useEffect(() => {
+    return () => { recognitionRef.current?.abort(); };
+  }, []);
+
   // ── Send message ───────────────────────────────────────────────────────────
 
-  const sendMessage = async (text: string, forceAudio = false) => {
+  const sendMessage = useCallback(async (text: string, forceAudio = false) => {
     if (!text.trim() || sending) return;
     setSending(true);
 
@@ -147,7 +116,10 @@ function NeoChat() {
     try {
       const res = await fetch("/api/agents/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Accept: forceAudio ? "audio/mpeg, application/json" : "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Accept: forceAudio ? "audio/mpeg, application/json" : "application/json",
+        },
         body: JSON.stringify({ message: text, sessionId, userId: currentUserId }),
       });
 
@@ -159,9 +131,8 @@ function NeoChat() {
       if (forceAudio && ct.includes("audio")) {
         try { reply = decodeURIComponent(res.headers.get("X-Neo-Reply") ?? ""); } catch { reply = ""; }
         resolvedAgent = res.headers.get("X-Neo-Agent") ?? "neo-chat";
-        void res.blob().then(blob => {
-          setAudioUrl(prev => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(blob); });
-        }).catch(() => {});
+        const blob = await res.blob();
+        setAudioUrl(prev => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(blob); });
       } else {
         const data = await res.json();
         reply = data?.reply ?? "";
@@ -182,53 +153,80 @@ function NeoChat() {
     } finally {
       setSending(false);
     }
-  };
+  }, [sending, sessionId, currentUserId]);
 
-  // ── Mic toggle (on/off, stays in conversation) ─────────────────────────────
+  // ── Mic: Browser Speech Recognition ────────────────────────────────────────
 
-  const getLiveConnectionInfo = useCallback(async (): Promise<LiveConnectionInfo | null> => {
-    try {
-      const res = await fetch("/api/elevenlabs/signed-url");
-      if (!res.ok) return null;
-      const data = await res.json().catch(() => ({}));
-      return {
-        signedUrl: typeof data?.signedUrl === "string" ? data.signedUrl : null,
-        agentId:   typeof data?.agentId   === "string" ? data.agentId   : null,
-      };
-    } catch { return null; }
+  const stopMic = useCallback((shouldSend: boolean) => {
+    const rec = recognitionRef.current;
+    if (rec) { rec.onresult = null; rec.onend = null; rec.onerror = null; rec.abort(); }
+    recognitionRef.current = null;
+
+    if (shouldSend) {
+      setLiveTranscript(prev => {
+        const cleaned = prev.trim();
+        if (cleaned) {
+          void sendMessage(cleaned, true);
+        }
+        return "";
+      });
+    } else {
+      setLiveTranscript("");
+    }
+    setMicOn(false);
+  }, [sendMessage]);
+
+  const startMic = useCallback(() => {
+    const SRClass = getSpeechRecognition();
+    if (!SRClass) return;
+
+    setLiveTranscript("");
+    const recognition = new SRClass();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
+      let full = "";
+      for (let i = 0; i < event.results.length; i++) {
+        full += event.results[i][0].transcript;
+      }
+      setLiveTranscript(full);
+    };
+
+    recognition.onerror = () => {
+      setMicOn(false);
+      recognitionRef.current = null;
+    };
+
+    recognition.onend = () => {
+      // Browser may auto-stop after silence; restart if still supposed to be on
+      if (recognitionRef.current === recognition) {
+        try { recognition.start(); } catch { setMicOn(false); recognitionRef.current = null; }
+      }
+    };
+
+    recognition.start();
+    recognitionRef.current = recognition;
+    setMicOn(true);
   }, []);
 
-  const toggleMic = useCallback(async () => {
-    if (micStarting || sending || speakerActive) return;
-
+  const toggleMic = useCallback(() => {
+    if (sending || speakerActive) return;
     if (micOn) {
-      // Turn mic OFF → send whatever was captured
-      const cleaned = normalizeAsrTranscript(pendingVoiceText);
-      if (cleaned) pendingStopDispatchRef.current = cleaned;
-      try { conversation.endSession(); } catch {}
-      setPendingVoiceText("");
+      stopMic(true);
     } else {
-      // Turn mic ON
-      setPendingVoiceText("");
-      try {
-        await navigator.mediaDevices.getUserMedia({ audio: true });
-        const conn = await getLiveConnectionInfo();
-        if (conn?.signedUrl) { conversation.startSession({ signedUrl: conn.signedUrl }); return; }
-        if (conn?.agentId)   { conversation.startSession({ agentId: conn.agentId, connectionType: "webrtc" }); return; }
-        const agentId = process.env.NEXT_PUBLIC_ELEVENLABS_AGENT_ID;
-        if (!agentId) throw new Error("Voice not configured.");
-        conversation.startSession({ agentId, connectionType: "webrtc" });
-      } catch {}
+      startMic();
     }
-  }, [micOn, micStarting, sending, speakerActive, conversation, pendingVoiceText, getLiveConnectionInfo]);
+  }, [micOn, sending, speakerActive, startMic, stopMic]);
 
-  // ── Quick prompt (voice) ───────────────────────────────────────────────────
+  // ── Quick prompt ───────────────────────────────────────────────────────────
 
   const handleQuickPrompt = useCallback((prompt: string) => {
     if (sending || speakerActive) return;
-    if (micOn) { try { conversation.endSession(); } catch {} }
+    if (micOn) stopMic(false);
     void sendMessage(prompt, true);
-  }, [sending, speakerActive, micOn, conversation]);
+  }, [sending, speakerActive, micOn, stopMic, sendMessage]);
 
   // ── Text submit ────────────────────────────────────────────────────────────
 
@@ -254,7 +252,6 @@ function NeoChat() {
           {isEmpty ? (
             /* ── Empty state with quick prompts ────────────────────── */
             <div className="flex flex-col items-center justify-center h-[calc(100vh-200px)]">
-              {/* Neo avatar */}
               <div className="relative mb-8">
                 <div className="absolute inset-0 w-24 h-24 rounded-full border border-cyan-400/10 animate-ping" style={{ animationDuration: "3s" }} />
                 <div className="w-24 h-24 rounded-full bg-gradient-to-br from-zinc-800 via-zinc-900 to-black border border-zinc-700/50 flex items-center justify-center shadow-2xl shadow-cyan-500/5">
@@ -307,7 +304,6 @@ function NeoChat() {
                 </div>
               ))}
 
-              {/* Thinking indicator */}
               {sending && (
                 <div className="flex gap-3">
                   <div className="w-7 h-7 rounded-full bg-gradient-to-br from-cyan-600/20 to-cyan-900/20 border border-cyan-500/20 flex items-center justify-center shrink-0 mt-0.5">
@@ -326,11 +322,11 @@ function NeoChat() {
       </div>
 
       {/* ── Live transcript preview (when mic is on) ──────────────── */}
-      {micOn && pendingVoiceText.trim() && (
+      {micOn && liveTranscript.trim() && (
         <div className="border-t border-zinc-800/40 bg-zinc-900/50 px-4 py-2">
           <div className="mx-auto max-w-2xl flex items-center gap-2">
             <div className="w-2 h-2 rounded-full bg-red-400 animate-pulse shrink-0" />
-            <p className="text-[13px] text-zinc-400 italic truncate">&ldquo;{pendingVoiceText.trim()}&rdquo;</p>
+            <p className="text-[13px] text-zinc-400 italic truncate">&ldquo;{liveTranscript.trim()}&rdquo;</p>
           </div>
         </div>
       )}
@@ -341,38 +337,35 @@ function NeoChat() {
           <form onSubmit={handleTextSubmit} className="flex items-center gap-3">
 
             {/* Mic toggle button */}
-            <button
-              type="button"
-              onClick={toggleMic}
-              disabled={micStarting || sending || speakerActive}
-              title={micOn ? "Turn mic off (sends message)" : "Turn mic on"}
-              className={`relative shrink-0 w-11 h-11 rounded-full flex items-center justify-center transition-all duration-200 disabled:opacity-40 ${
-                micOn
-                  ? "bg-red-500/20 border-2 border-red-400 hover:bg-red-500/30 shadow-lg shadow-red-500/10"
-                  : "bg-zinc-800 border border-zinc-700 hover:bg-zinc-700 hover:border-zinc-600"
-              }`}
-            >
-              {micStarting ? (
-                <div className="w-4 h-4 border-2 border-zinc-500 border-t-transparent rounded-full animate-spin" />
-              ) : micOn ? (
-                /* Mic ON icon (with red slash to indicate "click to stop") */
-                <svg viewBox="0 0 24 24" className="w-5 h-5 text-red-400" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
-                  <path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/>
-                  <line x1="8" y1="23" x2="16" y2="23"/>
-                </svg>
-              ) : (
-                /* Mic OFF icon */
-                <svg viewBox="0 0 24 24" className="w-5 h-5 text-zinc-400" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
-                  <path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/>
-                  <line x1="8" y1="23" x2="16" y2="23"/>
-                </svg>
-              )}
+            {micSupported && (
+              <button
+                type="button"
+                onClick={toggleMic}
+                disabled={sending || speakerActive}
+                title={micOn ? "Stop listening & send" : "Start listening"}
+                className={`relative shrink-0 w-11 h-11 rounded-full flex items-center justify-center transition-all duration-200 disabled:opacity-40 ${
+                  micOn
+                    ? "bg-red-500/20 border-2 border-red-400 hover:bg-red-500/30 shadow-lg shadow-red-500/10"
+                    : "bg-zinc-800 border border-zinc-700 hover:bg-zinc-700 hover:border-zinc-600"
+                }`}
+              >
+                {micOn ? (
+                  <svg viewBox="0 0 24 24" className="w-5 h-5 text-red-400" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                    <path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/>
+                    <line x1="8" y1="23" x2="16" y2="23"/>
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" className="w-5 h-5 text-zinc-400" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                    <path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/>
+                    <line x1="8" y1="23" x2="16" y2="23"/>
+                  </svg>
+                )}
 
-              {/* Recording pulse ring */}
-              {micOn && <span className="absolute inset-0 rounded-full border border-red-400/40 animate-ping" style={{ animationDuration: "1.5s" }} />}
-            </button>
+                {micOn && <span className="absolute inset-0 rounded-full border border-red-400/40 animate-ping" style={{ animationDuration: "1.5s" }} />}
+              </button>
+            )}
 
             {/* Text input */}
             <div className="flex-1 relative">
@@ -400,7 +393,7 @@ function NeoChat() {
           </form>
 
           {/* Status line */}
-          <div className="flex items-center justify-between mt-2 px-1">
+          <div className="flex items-center justify-between mt-2 px-1 min-h-[18px]">
             <div className="flex items-center gap-2">
               {micOn && (
                 <>
@@ -430,20 +423,15 @@ function NeoChat() {
                 </>
               )}
             </div>
-            {micOn && (
-              <span className="text-[10px] text-zinc-600">mic is on</span>
-            )}
           </div>
         </div>
       </div>
 
-      {/* Audio player (hidden, plays Neo response) */}
-      {!micOn && !micStarting && (
-        <VoicePlayer
-          audioUrl={audioUrl}
-          onEnded={() => setAudioUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null; })}
-        />
-      )}
+      {/* Audio player (hidden, plays Neo's TTS response) */}
+      <VoicePlayer
+        audioUrl={audioUrl}
+        onEnded={() => setAudioUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null; })}
+      />
     </div>
   );
 }
