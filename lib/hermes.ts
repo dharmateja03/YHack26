@@ -74,6 +74,60 @@ function buildPrompt(input: HermesScheduleInput): string {
 }
 
 async function runHermes(prompt: string): Promise<string | null> {
+  const transport = (process.env.HERMES_TRANSPORT ?? "auto").toLowerCase();
+
+  if (transport === "lava") {
+    return runHermesViaLava(prompt);
+  }
+  if (transport === "cli") {
+    return runHermesViaCli(prompt);
+  }
+
+  // auto: prefer Lava (all LLM calls through one gateway), then fall back to CLI.
+  const viaLava = await runHermesViaLava(prompt);
+  if (viaLava) return viaLava;
+  return runHermesViaCli(prompt);
+}
+
+async function runHermesViaLava(prompt: string): Promise<string | null> {
+  const apiKey = process.env.LAVA_API_KEY;
+  if (!apiKey) return null;
+
+  const baseUrl = process.env.LAVA_BASE_URL ?? "https://gateway.lava.so/v1";
+  const model = process.env.HERMES_LAVA_MODEL ?? process.env.HERMES_MODEL ?? "claude-sonnet-4-6";
+  const agentId = process.env.HERMES_LAVA_AGENT_ID ?? "neo-sched-hermes";
+
+  try {
+    const res = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "x-lava-agent-id": agentId,
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.1,
+        max_tokens: 300,
+        messages: [
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+      }),
+    });
+
+    if (!res.ok) return null;
+    const data = await res.json();
+    const content = data?.choices?.[0]?.message?.content;
+    return typeof content === "string" ? content : null;
+  } catch {
+    return null;
+  }
+}
+
+async function runHermesViaCli(prompt: string): Promise<string | null> {
   const command = process.env.HERMES_COMMAND ?? "hermes";
   const timeoutMs = Number(process.env.HERMES_TIMEOUT_MS ?? 20_000);
 
@@ -134,4 +188,3 @@ export async function findMutualSlotWithHermes(
   const parsed = extractJson(raw);
   return toTimeSlotOrNull(parsed);
 }
-
