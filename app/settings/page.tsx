@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useUser } from "@auth0/nextjs-auth0/client";
+import { useRouter } from "next/navigation";
 import ConnectionCard from "@/components/ConnectionCard";
 
 interface ConnectedState {
@@ -20,6 +22,13 @@ interface AccountNames {
 const INTEGRATIONS = ["github", "slack", "jira", "calendar"] as const;
 
 export default function SettingsPage() {
+  const { user, isLoading } = useUser();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!isLoading && !user) router.replace("/login");
+  }, [user, isLoading, router]);
+
   const [connected, setConnected] = useState<ConnectedState>({
     github: false, slack: false, jira: false, calendar: false,
   });
@@ -46,6 +55,8 @@ export default function SettingsPage() {
     setConnected(prev => ({ ...prev, [integration]: false }));
     setAccountNames(prev => ({ ...prev, [integration]: undefined }));
   };
+
+  if (isLoading || !user) return null;
 
   return (
     <div className="relative min-h-[calc(100vh-65px)] px-6 py-16 overflow-hidden">
