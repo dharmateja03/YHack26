@@ -1,6 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import { useUser } from "@auth0/nextjs-auth0/client";
+import { useRouter } from "next/navigation";
+import { useEffect } from "react";
 import AgentCard from "@/components/AgentCard";
 import VoicePlayer from "@/components/VoicePlayer";
 
@@ -20,10 +23,19 @@ const INITIAL_AGENTS: AgentStatus[] = [
 ];
 
 export default function HomePage() {
+  const { user, isLoading } = useUser();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!isLoading && !user) router.replace("/login");
+  }, [user, isLoading, router]);
+
   const [listening, setListening] = useState(false);
   const [audioUrl, setAudioUrl]   = useState<string | null>(null);
   const [agents, setAgents]       = useState<AgentStatus[]>(INITIAL_AGENTS);
   const [lastQuery, setLastQuery] = useState<string | null>(null);
+
+  if (isLoading || !user) return null;
 
   const handleTalkToNeo = () => {
     if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
