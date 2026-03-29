@@ -93,8 +93,8 @@ async function runHermesViaLava(prompt: string): Promise<string | null> {
   const apiKey = process.env.LAVA_API_KEY;
   if (!apiKey) return null;
 
-  const baseUrl = process.env.LAVA_BASE_URL ?? "https://gateway.lava.so/v1";
-  const model = process.env.HERMES_LAVA_MODEL ?? process.env.HERMES_MODEL ?? "claude-sonnet-4-6";
+  const baseUrl = process.env.LAVA_BASE_URL ?? "https://api.lava.so/v1";
+  const model = process.env.HERMES_LAVA_MODEL ?? process.env.HERMES_MODEL ?? "llama-3.1-8b-instant";
   const agentId = process.env.HERMES_LAVA_AGENT_ID ?? "neo-sched-hermes";
 
   try {
