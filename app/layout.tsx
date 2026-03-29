@@ -20,6 +20,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </span>
             <div className="flex items-center gap-4">
               <Link
+                href="/neo"
+                className="text-[10px] tracking-[0.25em] uppercase text-cyan-300 hover:text-cyan-200 transition-colors duration-200"
+                style={{ fontFamily: "'JetBrains Mono', monospace" }}
+              >
+                Launch Neo
+              </Link>
+              <Link
                 href="/dashboard"
                 className="text-[10px] tracking-[0.25em] uppercase text-zinc-500 hover:text-cyan-400 transition-colors duration-200"
                 style={{ fontFamily: "'JetBrains Mono', monospace" }}

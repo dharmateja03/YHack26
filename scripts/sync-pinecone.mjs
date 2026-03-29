@@ -13,7 +13,8 @@ const COLLECTIONS = {
 };
 
 const VOYAGE_API_URL = "https://api.voyageai.com/v1/embeddings";
-const VOYAGE_MODEL = "voyage-code-2";
+const VOYAGE_MODEL = process.env.VOYAGE_EMBED_MODEL?.trim() || "voyage-code-2";
+const VOYAGE_RETRY_WAIT_MS = Number(process.env.VOYAGE_RETRY_WAIT_MS || 22000);
 
 function parseLimitArg() {
   const idx = process.argv.findIndex((a) => a === "--limit");
@@ -43,7 +44,7 @@ async function upsertPineconeVectors(vectors) {
   const host = getPineconeHost();
   if (!host || vectors.length === 0) return;
 
-  await fetch(`${host}/vectors/upsert`, {
+  const res = await fetch(`${host}/vectors/upsert`, {
     method: "POST",
     headers: {
       "Api-Key": process.env.PINECONE_API_KEY,
@@ -54,21 +55,53 @@ async function upsertPineconeVectors(vectors) {
       namespace: process.env.PINECONE_NAMESPACE || "neosis",
     }),
   });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    if (res.status === 400 && body.includes("Vector dimension")) {
+      throw new Error(
+        `Pinecone dimension mismatch. ${body} ` +
+          `Fix: create/use a Pinecone index with dimension 1536 for model "${VOYAGE_MODEL}", ` +
+          `or switch VOYAGE_EMBED_MODEL to one that outputs your index dimension.`
+      );
+    }
+    throw new Error(`Pinecone ${res.status}: ${body || "upsert failed"}`);
+  }
 }
 
 async function embedBatch(texts) {
   if (texts.length === 0) return [];
-  const response = await axios.post(
-    VOYAGE_API_URL,
-    { input: texts, model: VOYAGE_MODEL },
-    {
-      headers: {
-        Authorization: `Bearer ${process.env.VOYAGE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
+  const maxAttempts = 5;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const response = await axios.post(
+        VOYAGE_API_URL,
+        { input: texts, model: VOYAGE_MODEL },
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.VOYAGE_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+      return response.data.data.map((item) => item.embedding);
+    } catch (err) {
+      const status = err?.response?.status;
+      const detail =
+        err?.response?.data?.detail ||
+        err?.response?.data?.message ||
+        err?.message ||
+        "embedding failed";
+      if (status === 429 && attempt < maxAttempts) {
+        const waitMs = Math.max(1000, VOYAGE_RETRY_WAIT_MS);
+        console.warn(`Voyage 429 (attempt ${attempt}/${maxAttempts}) — waiting ${Math.round(waitMs / 1000)}s...`);
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+        continue;
+      }
+      throw new Error(`Voyage ${status || "error"}: ${detail}`);
     }
-  );
-  return response.data.data.map((item) => item.embedding);
+  }
+  throw new Error("Voyage: retries exhausted");
 }
 
 function toText(collection, doc) {

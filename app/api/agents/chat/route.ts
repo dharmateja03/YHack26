@@ -61,7 +61,7 @@ function toSpokenStyle(text: string): string {
     .map((s) => s.trim())
     .filter(Boolean);
 
-  return sentences.slice(0, 3).join(" ");
+  return sentences.slice(0, 8).join(" ");
 }
 
 const TEAM_OVERVIEW_INTENT =
@@ -207,11 +207,57 @@ function buildTeamOverviewReply(orgRosterContext: string): string | null {
 // ── Fetch live data for context ──────────────────────────────────────
 
 async function getLiveContext(userId: string, teamId: string): Promise<string> {
+  const buildSqliteContext = async (): Promise<string> => {
+    const sqlite = await getSqliteDbSafe();
+    if (!sqlite) return "";
+
+    const prs = sqlite
+      .prepare(
+        `SELECT pr_id AS prId, title, author, checks, approvals, required_approvals AS requiredApprovals
+         FROM prs WHERE team_id = ? AND state = 'open' ORDER BY updated_at DESC LIMIT 10`
+      )
+      .all(teamId) as Array<Record<string, unknown>>;
+    const tickets = sqlite
+      .prepare(
+        `SELECT ticket_id AS ticketId, title, priority, status, blocked_by_json AS blockedBy
+         FROM tickets WHERE team_id = ? ORDER BY updated_at DESC LIMIT 10`
+      )
+      .all(teamId) as Array<Record<string, unknown>>;
+
+    const parts: string[] = [];
+    if (prs.length > 0) {
+      parts.push(
+        "Open PRs: " +
+          prs
+            .map(
+              (p) =>
+                `${p.prId} "${p.title}" by ${p.author ?? "unknown"} (${p.checks ?? "unknown"}, ${p.approvals ?? 0}/${p.requiredApprovals ?? 1} approvals)`
+            )
+            .join("; ")
+      );
+    }
+    if (tickets.length > 0) {
+      parts.push(
+        "Tickets: " +
+          tickets
+            .map((t) => {
+              let blockedBy: string[] = [];
+              try {
+                blockedBy = JSON.parse(String(t.blockedBy ?? "[]"));
+              } catch {}
+              return `${t.ticketId} "${t.title}" P${t.priority ?? 3} [${t.status ?? "Open"}]${blockedBy.length ? ` blocked by ${blockedBy.join(",")}` : ""}`;
+            })
+            .join("; ")
+      );
+    }
+    return parts.join("\n");
+  };
+
   try {
     const db = await getDb();
     const [prs, tickets, sprint] = await Promise.all([
-      db.collection(COLLECTIONS.prs).find({ teamId, state: "open" }).limit(5).toArray(),
-      db.collection(COLLECTIONS.tickets).find({ teamId }).sort({ priority: 1 }).limit(5).toArray(),
+      db.collection(COLLECTIONS.prs).find({ teamId, state: "open" }).limit(10).toArray(),
+      db.collection(COLLECTIONS.tickets).find({ teamId }).sort({ priority: 1 }).limit(10).toArray(),
       db.collection(COLLECTIONS.sprints).findOne({ teamId }),
     ]);
 
@@ -248,52 +294,15 @@ async function getLiveContext(userId: string, teamId: string): Promise<string> {
       );
     }
 
-    return parts.length > 0 ? parts.join("\n") : "No live data available.";
+    if (parts.length > 0) return parts.join("\n");
+
+    // MongoDB connected but empty — try SQLite
+    const sqliteCtx = await buildSqliteContext().catch(() => "");
+    return sqliteCtx || "No live data available.";
   } catch {
     try {
-      const sqlite = await getSqliteDbSafe();
-      if (!sqlite) return "Database unavailable — responding from memory only.";
-
-      const prs = sqlite
-        .prepare(
-          `SELECT pr_id AS prId, title, author, checks, approvals, required_approvals AS requiredApprovals
-           FROM prs WHERE team_id = ? AND state = 'open' ORDER BY updated_at DESC LIMIT 5`
-        )
-        .all(teamId) as Array<Record<string, unknown>>;
-      const tickets = sqlite
-        .prepare(
-          `SELECT ticket_id AS ticketId, title, priority, status, blocked_by_json AS blockedBy
-           FROM tickets WHERE team_id = ? ORDER BY updated_at DESC LIMIT 5`
-        )
-        .all(teamId) as Array<Record<string, unknown>>;
-
-      const parts: string[] = [];
-      if (prs.length > 0) {
-        parts.push(
-          "Open PRs: " +
-            prs
-              .map(
-                (p) =>
-                  `${p.prId} "${p.title}" by ${p.author ?? "unknown"} (${p.checks ?? "unknown"}, ${p.approvals ?? 0}/${p.requiredApprovals ?? 1} approvals)`
-              )
-              .join("; ")
-        );
-      }
-      if (tickets.length > 0) {
-        parts.push(
-          "Tickets: " +
-            tickets
-              .map((t) => {
-                let blockedBy: string[] = [];
-                try {
-                  blockedBy = JSON.parse(String(t.blockedBy ?? "[]"));
-                } catch {}
-                return `${t.ticketId} "${t.title}" P${t.priority ?? 3} [${t.status ?? "Open"}]${blockedBy.length ? ` blocked by ${blockedBy.join(",")}` : ""}`;
-              })
-              .join("; ")
-        );
-      }
-      return parts.length > 0 ? parts.join("\n") : "No live data available.";
+      const sqliteCtx = await buildSqliteContext();
+      return sqliteCtx || "Database unavailable — responding from memory only.";
     } catch {
       return "Database unavailable — responding from memory only.";
     }
@@ -710,7 +719,7 @@ export async function POST(req: NextRequest) {
     reply = await lavaChat(
       decision.agent && decision.action === "delegate" ? decision.agent : "neo-chat",
       messages,
-      { temperature: 0.35, max_tokens: 180 }
+      { temperature: 0.35, max_tokens: 500 }
     );
     reply = toSpokenStyle(reply);
   } catch {

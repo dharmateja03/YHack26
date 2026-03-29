@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb, COLLECTIONS } from "@/lib/mongodb";
 import { getSessionUser } from "@/lib/current-user";
+import { resolveOrgMemberUserId } from "@/lib/org";
 
 export interface SessionMeta {
   sessionId: string;
@@ -25,9 +26,19 @@ export interface SessionTurn {
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const sessionIdParam = url.searchParams.get("sessionId");
+  const requestedUserId = url.searchParams.get("userId")?.trim() || "";
 
   const user = await getSessionUser().catch(() => null);
-  const userId = url.searchParams.get("userId") ?? user?.userId ?? "user-1";
+  const sessionResolvedUserId = user?.userId
+    ? (await resolveOrgMemberUserId({
+        userId: user.userId,
+        email: user.email,
+      }).catch(() => user.userId)) || user.userId
+    : "";
+  const requestedResolvedUserId = requestedUserId
+    ? (await resolveOrgMemberUserId({ userId: requestedUserId }).catch(() => requestedUserId)) || requestedUserId
+    : "";
+  const userId = sessionResolvedUserId || requestedResolvedUserId || "user-1";
 
   try {
     const db = await getDb();
@@ -54,9 +65,10 @@ export async function GET(req: NextRequest) {
     }
 
     // ── List all sessions for user ────────────────────────────────────────
+    const userIds = Array.from(new Set([userId, requestedUserId, requestedResolvedUserId].filter(Boolean)));
     const docs = await db
       .collection(COLLECTIONS.conversations)
-      .find({ userId })
+      .find({ userId: { $in: userIds } })
       .sort({ updatedAt: -1 })
       .limit(50)
       .toArray();

@@ -4,9 +4,10 @@ import { useEffect, useRef, useState } from "react";
 
 interface VoicePlayerProps {
   audioUrl: string | null;
+  onEnded?: () => void;
 }
 
-export default function VoicePlayer({ audioUrl }: VoicePlayerProps) {
+export default function VoicePlayer({ audioUrl, onEnded }: VoicePlayerProps) {
   const audioRef              = useRef<HTMLAudioElement | null>(null);
   const [playing, setPlaying] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
@@ -16,10 +17,18 @@ export default function VoicePlayer({ audioUrl }: VoicePlayerProps) {
     const audio = new Audio();
     audio.src = audioUrl;
     audioRef.current = audio;
-    audio.addEventListener("ended", () => setPlaying(false));
+    const handleEnded = () => {
+      setPlaying(false);
+      onEnded?.();
+    };
+    audio.addEventListener("ended", handleEnded);
     audio.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
-    return () => { audio.pause(); audio.src = ""; };
-  }, [audioUrl]);
+    return () => {
+      audio.removeEventListener("ended", handleEnded);
+      audio.pause();
+      audio.src = "";
+    };
+  }, [audioUrl, onEnded]);
 
   const togglePlay = () => {
     const audio = audioRef.current;
