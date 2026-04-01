@@ -5,11 +5,23 @@ import {Subtitle} from './HelloWorld/Subtitle';
 import {Title} from './HelloWorld/Title';
 import {ProductLaunch} from './ProductLaunch';
 import {Typography} from './Typography';
+import {NeosisVideo} from './Neosis';
 
 // Each "Composition" is a video to render
 export const RemotionRoot: React.FC = () => {
   return (
     <>
+      {/* Neosis - YHack 2026 Demo Reel */}
+      <Composition
+        id="Neosis"
+        component={NeosisVideo}
+        durationInFrames={1800}
+        fps={60}
+        width={1920}
+        height={1080}
+        defaultProps={{}}
+      />
+
       {/* Product Launch - The Main Feature */}
       <Composition
         id="ProductLaunch"

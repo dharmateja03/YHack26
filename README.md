@@ -184,6 +184,12 @@ npm run seed:demo -- --prs 20 --tickets 12 --messages 30
 
 # Run dev server
 npm run dev
+
+# Preview Remotion video
+npm run video:dev
+
+# Render promotional video
+npm run video:render
 ```
 
 ## Project Structure
@@ -210,6 +216,11 @@ lib/
   nylas.ts                  → Nylas calendar API
   elevenlabs.ts             → ElevenLabs TTS streaming
   voyage.ts                 → Voyage AI embeddings
+
+remotion/                   → Steve Jobs-style promotional videos
+  ProductLaunch/            → Cinematic product reveal (15s)
+  Typography/               → Typography showcase
+  HelloWorld/               → Example compositions
 ```
 
 ## Team

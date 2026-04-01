@@ -138,8 +138,8 @@ function buildMemberOverviewReply(message: string, orgRosterContext: string): st
   if (!text) return null;
 
   const wantsMemberDetail =
-    /\b(tell me about|who(?:'s| is)|about)\b/i.test(message) ||
-    /\b(team member|teammate|org member|member)\b/i.test(message);
+    /\b(tell me about|who(?:'s| is)|describe|info on)\b/i.test(message) &&
+    !/\b(working on|assigned|blocked|last time|talked|previous|before)\b/i.test(message);
   if (!wantsMemberDetail) return null;
 
   const members = parseRosterMembers(text);

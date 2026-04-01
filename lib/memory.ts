@@ -44,7 +44,9 @@ export async function saveTurn(
   let embedding: number[] | undefined;
   try {
     embedding = await embed(content);
-  } catch {}
+  } catch (err: any) {
+    console.warn("[memory] embed failed — turns saved without vector:", err?.response?.status ?? err?.message ?? "unknown");
+  }
 
   const turn: ConversationTurn = {
     role,
@@ -93,6 +95,21 @@ export async function getRecentTurns(
   return doc.turns.slice(-limit);
 }
 
+// ── Cosine similarity ────────────────────────────────────────────────
+function cosineSimilarity(a: number[], b: number[]): number {
+  if (a.length !== b.length || a.length === 0) return 0;
+  let dot = 0, magA = 0, magB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    magA += a[i] * a[i];
+    magB += b[i] * b[i];
+  }
+  const denom = Math.sqrt(magA) * Math.sqrt(magB);
+  return denom === 0 ? 0 : dot / denom;
+}
+
+const SIMILARITY_THRESHOLD = 0.55;
+
 // ── Semantic search across ALL past conversations ─────────────────
 // Finds relevant turns from any session for this user
 export async function recallRelevantMemory(
@@ -107,69 +124,64 @@ export async function recallRelevantMemory(
     // Voyage unavailable — use text fallback only
   }
 
-  // Try MongoDB + Atlas Vector Search
   try {
     const db = await getDb();
 
+    // Vector search: load conversations and compute cosine similarity per turn
     if (queryEmbedding) {
-      const results = await db
+      const docs = await db
         .collection(COLLECTIONS.conversations)
-        .aggregate([
-          {
-            $vectorSearch: {
-              index: "conversations_vector",
-              path: "turns.embedding",
-              queryVector: queryEmbedding,
-              numCandidates: 50,
-              limit: limit * 2,
-              filter: { userId },
-            },
-          },
-          { $addFields: { score: { $meta: "vectorSearchScore" } } },
-          { $match: { score: { $gte: 0.65 } } },
-          { $limit: limit },
-          { $project: { turns: 1, score: 1 } },
-        ])
+        .find({ userId })
+        .sort({ updatedAt: -1 })
+        .limit(30)
         .toArray();
 
-      const memories: { content: string; role: string; agentUsed?: string; timestamp: Date; score: number }[] = [];
-      for (const doc of results) {
+      const scored: { content: string; role: string; agentUsed?: string; timestamp: Date; score: number }[] = [];
+
+      for (const doc of docs) {
         for (const turn of (doc.turns as ConversationTurn[]) ?? []) {
-          memories.push({
-            content: turn.content,
-            role: turn.role,
-            agentUsed: turn.agentUsed,
-            timestamp: turn.timestamp,
-            score: doc.score,
-          });
+          if (!turn.embedding || !turn.content) continue;
+          const score = cosineSimilarity(queryEmbedding, turn.embedding);
+          if (score >= SIMILARITY_THRESHOLD) {
+            scored.push({
+              content: turn.content,
+              role: turn.role,
+              agentUsed: turn.agentUsed,
+              timestamp: turn.timestamp,
+              score,
+            });
+          }
         }
       }
-      return memories.sort((a, b) => b.score - a.score).slice(0, limit);
+
+      if (scored.length > 0) {
+        return scored.sort((a, b) => b.score - a.score).slice(0, limit);
+      }
     }
 
-    // No embedding — try text fallback against MongoDB
+    // No embedding or no vector matches — text fallback
     return await fallbackTextSearch(db, userId, query, limit);
   } catch {
-    // MongoDB unavailable — fall back to in-memory text search
     return inMemoryTextSearch(userId, query, limit);
   }
 }
 
-// ── Fallback: simple text match when vector index isn't ready ──────
+// ── Fallback: keyword match when embeddings are unavailable ──────
 async function fallbackTextSearch(
   db: any,
   userId: string,
   query: string,
   limit: number
 ) {
-  const keywords = query.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+  const stopWords = new Set(["the","and","for","that","this","with","was","what","how","are","has","have","been","from","they","them","their","your","about","last","time","when","where","which","will","would","could","should","does","also","just","more","some","other","than","then","into","only","over","such","after","before","between","each","during"]);
+  const keywords = query.toLowerCase().split(/\s+/).filter(w => w.length > 2 && !stopWords.has(w));
   if (keywords.length === 0) return [];
 
   const docs = await db
     .collection(COLLECTIONS.conversations)
     .find({ userId })
     .sort({ updatedAt: -1 })
-    .limit(10)
+    .limit(20)
     .toArray();
 
   const matches: { content: string; role: string; agentUsed?: string; timestamp: Date; score: number }[] = [];
@@ -178,7 +190,7 @@ async function fallbackTextSearch(
     for (const turn of (doc.turns as ConversationTurn[]) ?? []) {
       const text = turn.content.toLowerCase();
       const matchCount = keywords.filter(k => text.includes(k)).length;
-      if (matchCount > 0) {
+      if (matchCount >= Math.max(1, Math.floor(keywords.length * 0.3))) {
         matches.push({
           content: turn.content,
           role: turn.role,
@@ -199,7 +211,8 @@ function inMemoryTextSearch(
   query: string,
   limit: number
 ): { content: string; role: string; agentUsed?: string; timestamp: Date; score: number }[] {
-  const keywords = query.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+  const stopWords = new Set(["the","and","for","that","this","with","was","what","how","are","has","have","been","from","they","them","their","your","about","last","time","when","where","which","will","would","could","should","does","also","just","more","some","other","than","then","into","only","over","such","after","before","between","each","during"]);
+  const keywords = query.toLowerCase().split(/\s+/).filter(w => w.length > 2 && !stopWords.has(w));
   if (keywords.length === 0) return [];
 
   const matches: { content: string; role: string; agentUsed?: string; timestamp: Date; score: number }[] = [];
@@ -209,7 +222,7 @@ function inMemoryTextSearch(
     for (const turn of doc.turns) {
       const text = turn.content.toLowerCase();
       const matchCount = keywords.filter(k => text.includes(k)).length;
-      if (matchCount > 0) {
+      if (matchCount >= Math.max(1, Math.floor(keywords.length * 0.3))) {
         matches.push({
           content: turn.content,
           role: turn.role,

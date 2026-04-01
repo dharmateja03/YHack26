@@ -53,6 +53,81 @@ function ts() {
   return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+/** Wordmark — Instrument Serif, tight tracking (quiet confidence) */
+function NeoWordmark({
+  size = "hero",
+  className = "",
+}: {
+  size?: "hero" | "inline" | "micro" | "avatar";
+  className?: string;
+}) {
+  const sizes =
+    size === "hero"
+      ? "text-[2.65rem] sm:text-5xl tracking-[-0.04em]"
+      : size === "inline"
+        ? "text-[13px] tracking-[-0.03em]"
+        : size === "avatar"
+          ? "text-[11px] tracking-[-0.03em]"
+          : "text-[10px] tracking-[-0.02em]";
+  return (
+    <span
+      className={`font-display italic text-white antialiased ${sizes} ${className}`}
+      style={{ fontFamily: "'Instrument Serif', serif" }}
+    >
+      Neo
+    </span>
+  );
+}
+
+/** Thin orbital arcs — slow rotation, restrained pulse rings */
+function NeoOrbitalDecor() {
+  return (
+    <>
+      <div className="absolute -inset-3 rounded-full border border-white/[0.05] ring-1-anim pointer-events-none" />
+      <div className="absolute -inset-5 rounded-full border border-cyan-500/[0.06] ring-2-anim pointer-events-none" />
+      <svg
+        className="neo-orbit-wrap w-[calc(100%+36px)] h-[calc(100%+36px)] -left-[18px] -top-[18px]"
+        viewBox="0 0 120 120"
+        aria-hidden
+      >
+        <circle cx="60" cy="60" r="56" stroke="rgba(255,255,255,0.06)" strokeWidth="0.4" fill="none" />
+        <circle
+          cx="60"
+          cy="60"
+          r="56"
+          stroke="url(#neoOrbGrad)"
+          strokeWidth="0.85"
+          strokeDasharray="14 200"
+          strokeLinecap="round"
+          fill="none"
+        />
+        <defs>
+          <linearGradient id="neoOrbGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="rgba(6,182,212,0.55)" />
+            <stop offset="50%" stopColor="rgba(255,255,255,0.2)" />
+            <stop offset="100%" stopColor="rgba(6,182,212,0.15)" />
+          </linearGradient>
+        </defs>
+      </svg>
+      <svg
+        className="neo-orbit-wrap neo-orbit-wrap--reverse w-[calc(100%+52px)] h-[calc(100%+52px)] -left-[26px] -top-[26px]"
+        viewBox="0 0 120 120"
+        aria-hidden
+      >
+        <circle
+          cx="60"
+          cy="60"
+          r="58"
+          stroke="rgba(255,255,255,0.04)"
+          strokeWidth="0.35"
+          strokeDasharray="4 18"
+          fill="none"
+        />
+      </svg>
+    </>
+  );
+}
+
 // ── Root export ──────────────────────────────────────────────────────────────
 
 export default function NeoPage() {
@@ -252,24 +327,39 @@ function NeoChat() {
   const isEmpty = chatMessages.length === 0 && !sending;
 
   return (
-    <div className="flex flex-col h-[calc(100vh-65px)] bg-[#07090d] text-white overflow-hidden">
+    <div className="relative flex flex-col h-[calc(100vh-65px)] bg-[#06080c] text-white overflow-hidden">
+      <div className="pointer-events-none absolute inset-0 neo-grain opacity-60" aria-hidden />
+      <div
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_80%_50%_at_50%_-10%,rgba(6,182,212,0.07),transparent_55%)]"
+        aria-hidden
+      />
 
       {/* ── Main chat area ─────────────────────────────────────────── */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="relative flex-1 overflow-y-auto">
         <div className="mx-auto max-w-2xl px-4 py-6">
 
           {isEmpty ? (
             /* ── Empty state with quick prompts ────────────────────── */
-            <div className="flex flex-col items-center justify-center h-[calc(100vh-200px)]">
-              <div className="relative mb-8">
-                <div className="absolute inset-0 w-24 h-24 rounded-full border border-cyan-400/10 animate-ping" style={{ animationDuration: "3s" }} />
-                <div className="w-24 h-24 rounded-full bg-gradient-to-br from-zinc-800 via-zinc-900 to-black border border-zinc-700/50 flex items-center justify-center shadow-2xl shadow-cyan-500/5">
-                  <span className="text-4xl italic text-white" style={{ fontFamily: "'Instrument Serif', serif" }}>N</span>
+            <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)]">
+              <div className="relative mb-10 flex h-40 w-40 items-center justify-center">
+                <NeoOrbitalDecor />
+                <div className="relative flex h-[7.25rem] w-[7.25rem] items-center justify-center rounded-full border border-white/[0.09] bg-gradient-to-b from-zinc-800/95 via-zinc-950 to-black orb-breathe shadow-[0_0_0_1px_rgba(255,255,255,0.04),0_25px_50px_-12px_rgba(0,0,0,0.85)]">
+                  <NeoWordmark size="hero" />
                 </div>
               </div>
 
-              <h2 className="text-xl font-medium text-white mb-1 tracking-tight">What can I help with?</h2>
-              <p className="text-[13px] text-zinc-500 mb-8">Ask anything or pick a suggestion</p>
+              <p
+                className="mb-1 text-[10px] font-medium uppercase tracking-[0.35em] text-zinc-500"
+                style={{ fontFamily: "var(--font-mono)" }}
+              >
+                Neosis
+              </p>
+              <h2 className="mb-2 text-center text-[1.35rem] font-normal tracking-tight text-white sm:text-2xl">
+                What should we handle?
+              </h2>
+              <p className="mb-10 max-w-sm text-center text-[13px] leading-relaxed text-zinc-500">
+                Voice or text — one calm place for briefs, PRs, and your calendar.
+              </p>
 
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 w-full max-w-xl">
                 {QUICK_PROMPTS.map(qp => (
@@ -291,8 +381,8 @@ function NeoChat() {
               {chatMessages.map((msg, i) => (
                 <div key={i} className={`flex gap-3 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
                   {msg.role === "assistant" && (
-                    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-cyan-600/20 to-cyan-900/20 border border-cyan-500/20 flex items-center justify-center shrink-0 mt-0.5">
-                      <span className="text-[11px] italic text-cyan-300" style={{ fontFamily: "'Instrument Serif', serif" }}>N</span>
+                    <div className="flex h-8 min-w-[2.75rem] shrink-0 items-center justify-center rounded-full border border-cyan-500/15 bg-gradient-to-b from-cyan-950/40 to-black/60 px-2 pt-0.5 shadow-inner shadow-white/[0.03]">
+                      <NeoWordmark size="avatar" className="text-cyan-100/95" />
                     </div>
                   )}
                   <div className={`max-w-[80%] ${msg.role === "user" ? "order-first" : ""}`}>
@@ -315,8 +405,8 @@ function NeoChat() {
 
               {sending && (
                 <div className="flex gap-3">
-                  <div className="w-7 h-7 rounded-full bg-gradient-to-br from-cyan-600/20 to-cyan-900/20 border border-cyan-500/20 flex items-center justify-center shrink-0 mt-0.5">
-                    <span className="text-[11px] italic text-cyan-300" style={{ fontFamily: "'Instrument Serif', serif" }}>N</span>
+                  <div className="flex h-8 min-w-[2.75rem] shrink-0 items-center justify-center rounded-full border border-cyan-500/20 bg-gradient-to-b from-cyan-950/50 to-black/50 px-2 pt-0.5">
+                    <NeoWordmark size="avatar" className="text-cyan-200/90" />
                   </div>
                   <div className="bg-zinc-800/50 border border-zinc-700/30 rounded-2xl px-4 py-2.5">
                     <span className="text-[14px] text-zinc-400 animate-pulse">{thinkingPhrase}</span>
