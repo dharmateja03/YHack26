@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 
 /* ─── feature data ─── */
@@ -85,6 +85,12 @@ function Reveal({
 /* ─── page ─── */
 
 export default function LandingPage() {
+  const nextSectionRef = useRef<HTMLElement>(null);
+
+  const scrollToNeoSched = useCallback(() => {
+    nextSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+
   return (
     <div className="min-h-screen text-[#e8e8e8] selection:bg-cyan-400/20">
       {/* ── HERO ── */}
@@ -96,15 +102,22 @@ export default function LandingPage() {
             The Affordable AI Executive Assistant
           </p>
 
-          <h1
-            className="hero-reveal mt-6 text-[clamp(3.5rem,8vw,7rem)] leading-[1] tracking-tight text-white"
-            style={{
-              fontFamily: "var(--font-display)",
-              animationDelay: "100ms",
-            }}
+          <div
+            className="hero-reveal relative mx-auto mt-6 inline-block"
+            style={{ animationDelay: "100ms" }}
           >
-            Neos<span className="text-cyan-400">is</span>
-          </h1>
+            {/* Cyan halo behind wordmark — visible on black; glow animation is on h1 only */}
+            <div
+              className="neosis-glow-blob pointer-events-none absolute left-1/2 top-[52%] z-0 h-[min(12rem,38vw)] w-[min(22rem,92vw)] -translate-x-1/2 -translate-y-1/2 rounded-full bg-cyan-400/[0.35] blur-[40px] sm:h-[14rem] sm:w-[28rem] sm:blur-[56px]"
+              aria-hidden
+            />
+            <h1
+              className="neosis-wordmark-glow relative z-[1] text-[clamp(3.5rem,8vw,7rem)] leading-[1] tracking-tight text-white"
+              style={{ fontFamily: "var(--font-display)" }}
+            >
+              Neos<span className="text-cyan-300 drop-shadow-[0_0_24px_rgba(34,211,238,0.9)]">is</span>
+            </h1>
+          </div>
 
           <p
             className="hero-reveal mx-auto mt-6 max-w-sm text-[13px] leading-[1.7] text-zinc-500"
@@ -134,13 +147,32 @@ export default function LandingPage() {
           </div>
         </div>
 
-        <div className="absolute bottom-10 flex flex-col items-center">
-          <div className="scroll-line h-10 w-px bg-gradient-to-b from-transparent via-zinc-700 to-transparent" />
+        <div className="absolute bottom-8 flex flex-col items-center gap-3">
+          <div className="scroll-line h-8 w-px bg-gradient-to-b from-transparent via-zinc-600/80 to-transparent" />
+          <button
+            type="button"
+            onClick={scrollToNeoSched}
+            aria-label="Scroll to Neo Sched"
+            className="group flex h-11 w-11 items-center justify-center rounded-full border border-white/[0.1] bg-white/[0.03] text-zinc-400 shadow-[0_0_0_1px_rgba(255,255,255,0.04),inset_0_1px_0_rgba(255,255,255,0.06)] transition-all duration-300 hover:border-cyan-400/35 hover:bg-cyan-400/[0.08] hover:text-cyan-200 hover:shadow-[0_0_24px_rgba(34,211,238,0.2)]"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              className="h-5 w-5 transition-transform duration-300 group-hover:translate-y-0.5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
+              <path d="M6 9l6 6 6-6" />
+            </svg>
+          </button>
         </div>
       </section>
 
       {/* ── NEO SCHED — constant context block ── */}
-      <section className="px-6 pb-28">
+      <section ref={nextSectionRef} id="neo-sched" className="scroll-mt-[88px] px-6 pb-28">
         <div className="mx-auto max-w-[640px]">
           <Reveal>
             <div className="relative overflow-hidden rounded-2xl border border-white/[0.06] bg-white/[0.02] p-8 md:p-10">
