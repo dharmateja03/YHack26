@@ -33,7 +33,7 @@
     "better-sqlite3": "^12.8.0",
     "date-fns": "^3.6.0",
     "dotenv": "^17.3.1",
-    "next": "14.2.25",
+    "next": "^14.2.35",
     "openai": "^4.40.0",
     "react": "^18",
     "react-dom": "^18",
