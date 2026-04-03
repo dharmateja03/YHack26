@@ -1,6 +1,6 @@
 import {Config} from 'remotion';
 
-export const config: Config = {
+export const config = {
   fps: 60,
   width: 1920,
   height: 1080,

@@ -1,0 +1,11 @@
+.git
+.gitignore
+.next
+.next-dev
+node_modules
+npm-debug.log
+yarn-error.log
+.env
+.env.local
+.env.*
+out

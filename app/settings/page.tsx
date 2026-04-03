@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import ConnectionCard from "@/components/ConnectionCard";
 
@@ -64,9 +63,7 @@ const ONBOARDING_STEPS = ["Profile", "Org", "Integrations", "Done"] as const;
 type OnboardingStep = 0 | 1 | 2 | 3;
 
 export default function SettingsPage() {
-  const searchParams = useSearchParams();
-  const router = useRouter();
-  const isOnboarding = searchParams.get("onboarding") === "1";
+  const [isOnboarding, setIsOnboarding] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStep>(0);
 
   const [connected, setConnected] = useState<ConnectedState>({
@@ -116,6 +113,11 @@ export default function SettingsPage() {
   };
 
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      setIsOnboarding(params.get("onboarding") === "1");
+    }
+
     const version = ++loadVersionRef.current;
     let cancelled = false;
     const load = async () => {
